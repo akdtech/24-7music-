@@ -16,6 +16,22 @@ if (!MusicManager.prototype.__deathLiveStateGuardian) {
     const refresh = () => Promise.resolve(this.refreshPanel?.(guildId)).catch(() => {});
     const status = text => Promise.resolve(this.updateVoiceStatus?.(guildId, text)).catch(() => {});
 
+    // Discord audio state events do not fire every second. Keep the panel's
+    // position/progress live while the resource is actually playing.
+    const startLivePanelTimer = () => {
+      if (player.__deathLivePanelTimer) return;
+      player.__deathLivePanelTimer = setInterval(() => {
+        if (player.state?.status !== AudioPlayerStatus.Playing) return;
+        refresh();
+      }, 3000);
+    };
+
+    const stopLivePanelTimer = () => {
+      if (!player.__deathLivePanelTimer) return;
+      clearInterval(player.__deathLivePanelTimer);
+      player.__deathLivePanelTimer = null;
+    };
+
     player.on(AudioPlayerStatus.Playing, () => {
       const track = player.state?.resource?.metadata;
       if (!track) return;
@@ -28,10 +44,12 @@ if (!MusicManager.prototype.__deathLiveStateGuardian) {
       this.updatePresence(track);
       status("🎵 " + this.getTrackTitle(track));
       refresh();
+      startLivePanelTimer();
     });
 
     player.on(AudioPlayerStatus.Paused, () => {
       const state = this.getState(guildId);
+      stopLivePanelTimer();
       state.paused = true;
       state.positionOffset = this.getPosition(guildId);
       status("⏸️ Paused • " + (state.current ? this.getTrackTitle(state.current) : "DEATH Music 24/7"));
@@ -40,6 +58,7 @@ if (!MusicManager.prototype.__deathLiveStateGuardian) {
 
     player.on(AudioPlayerStatus.AutoPaused, () => {
       const state = this.getState(guildId);
+      stopLivePanelTimer();
       state.paused = true;
       status("⏸️ Paused • " + (state.current ? this.getTrackTitle(state.current) : "DEATH Music 24/7"));
       refresh();
@@ -69,6 +88,7 @@ if (!MusicManager.prototype.__deathLiveStateGuardian) {
           refresh();
           return;
         }
+        stopLivePanelTimer();
         state.current = null;
         state.pendingTrack = null;
         state.paused = false;
