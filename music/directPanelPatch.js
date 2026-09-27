@@ -142,6 +142,34 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
     return wrapped;
   };
 
+  // The legacy DirectMusicManager has its own movePanelToBottom() which builds the old
+  // Volume/Loop/Shuffle/Stop/Refresh UI. Override it here so sticky-panel recreation
+  // can NEVER resurrect those controls.
+  MusicManager.prototype.movePanelToBottom = async function canonicalMovePanelToBottom(guildId) {
+    const state = this.getState(guildId);
+    const channel = await this.findPanelChannel(guildId);
+    const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+
+    if (messages) {
+      const panels = [...messages.values()].filter(m => {
+        if (m.author?.id !== this.client.user.id) return false;
+        const title = clean(m.embeds?.[0]?.title);
+        const author = clean(m.embeds?.[0]?.author?.name);
+        const titleMatch = /DEATH\\s+MUSIC\\s*[•·-]?\\s*24\\/7/i.test(title) || /DEATH\\s+Music\\s+24\\/7/i.test(title);
+        const authorMatch = /DEATH\\s+MUSIC\\s+24\\/7/i.test(author);
+        const componentMatch = m.components?.some(row => row.components?.some(component => String(component.customId || "").startsWith("death_music_")));
+        return titleMatch || authorMatch || componentMatch;
+      });
+      for (const panel of panels) {
+        try { await panel.delete(); } catch {}
+      }
+    }
+
+    state.panelMessageId = null;
+    state.panelChannelId = channel.id;
+    return this.ensurePanel(guildId);
+  };
+
   MusicManager.prototype.refreshPanel = async function deathRichRefreshPanel(guildId) {
     try {
       await this.ensurePanel(guildId);
