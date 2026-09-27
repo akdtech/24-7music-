@@ -373,7 +373,7 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
   const pcm = new PassThrough({ highWaterMark: 1024 * 1024 });
   const resolvedTrack = {
     ...track,
-    url,
+    url: youtubeUrl(track?.id || youtubeId(track?.url) || track?.identifier),
     source: "youtube",
     title: track.title || "YouTube",
     author: track.author || "YouTube"
@@ -408,8 +408,10 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
   ff.stdout.pipe(pcm);
   player.play(resource);
 
-  if (handoff) {
-    try { manager.destroyStream?.(guildId, oldStream); } catch {}
+  if (handoff && oldStream && oldStream !== manager.streams.get(guildId)) {
+    try { oldStream.ff?.kill?.("SIGKILL"); } catch {}
+    try { oldStream.yt?.kill?.("SIGKILL"); } catch {}
+    try { oldStream.pcm?.destroy?.(); } catch {}
   }
 
   Promise.resolve(manager.updateVoiceStatus?.(
