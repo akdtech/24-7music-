@@ -43,7 +43,6 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
       const buffering = Boolean(current && player?.state.status === AudioPlayerStatus.Buffering);
       const paused = Boolean(current && (state.paused || player?.state.status === AudioPlayerStatus.Paused));
       const queued = state.queue.length;
-      const volume = Number(state.volume || this.defaultVolume);
       const duration = Number(current?.length || 0);
       const position = this.getPosition(guildId);
       const title = clean(current?.title) || (state.transitioning ? "Loading next track…" : "Nothing is playing");
@@ -63,7 +62,6 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
           `\`${format(position)}\` / \`${format(duration)}\`  •  **${status}**`
         )
         .addFields(
-          { name: "🔊 Volume", value: `**${volume}%**`, inline: true },
           { name: "📜 Queue", value: `**${queued}**`, inline: true },
           { name: "♾️ Autoplay", value: auto ? "**ON**" : "OFF", inline: true }
         )
@@ -88,6 +86,8 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
         button("death_music_autoplay", auto ? "Autoplay ON" : "Autoplay OFF", "♾️", auto ? ButtonStyle.Success : ButtonStyle.Secondary)
       );
 
+      // Deliberately no Volume or Shuffle controls. Volume stays configured
+      // internally and autoplay selects the next related YouTube track.
       const payload = { embeds: [embed], components: [row1, row2] };
       let message = null;
 
@@ -152,5 +152,5 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
     }
   };
 
-  console.log("🎨 DEATH rich sticky panel loaded: ONE live message + artwork + 5 focused controls; buttons always interactive.");
+  console.log("🎨 DEATH music panel loaded: Pause, Play, Skip, Queue + Autoplay only; no Volume/Shuffle.");
 }
