@@ -37,6 +37,21 @@ try {
 const clean = value => String(value || "").replace(/\s+/g, " ").trim();
 const kill = child => { try { child?.kill("SIGKILL"); } catch {} };
 
+function parseJsonOutput(text) {
+  const raw = String(text || "").trim();
+  try { return JSON.parse(raw); } catch {}
+  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try { return JSON.parse(lines[i]); } catch {}
+  }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(raw.slice(start, end + 1)); } catch {}
+  }
+  throw new Error("yt-dlp returned invalid JSON.");
+}
+
 function cookieArgs() {
   try {
     return fs.existsSync(COOKIE_FILE) ? ["--cookies", COOKIE_FILE] : [];
@@ -158,7 +173,7 @@ async function youtubeSearch(query, requester) {
         12000,
         "web_music,web_embedded"
       );
-      return normalize(JSON.parse(result.stdout), requester);
+      return normalize(parseJsonOutput(result.stdout), requester);
     } catch {
       return normalize({ id, webpage_url: youtubeUrl(id), title: "YouTube video" }, requester);
     }
@@ -176,7 +191,7 @@ async function youtubeSearch(query, requester) {
     "web_music,web_embedded"
   );
 
-  const data = JSON.parse(result.stdout || "{}");
+  const data = parseJsonOutput(result.stdout || "{}");
   const entries = Array.isArray(data?.entries) ? data.entries : [];
 
   const norm = value => clean(value)
@@ -258,7 +273,7 @@ async function resolveYouTube(track) {
         profile
       );
 
-      const info = JSON.parse(result.stdout || "{}");
+      const info = parseJsonOutput(result.stdout || "{}");
       const mediaUrl = clean(
         info?.url ||
         info?.requested_formats?.find(item => item?.url)?.url
