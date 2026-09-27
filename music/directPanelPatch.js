@@ -156,7 +156,7 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
         const title = clean(m.embeds?.[0]?.title);
         const author = clean(m.embeds?.[0]?.author?.name);
         const titleMatch = title.toLowerCase().includes("death music") && title.includes("24/7");
-        const authorMatch = /DEATH\\s+MUSIC\\s+24\\/7/i.test(author);
+        const authorMatch = author.toLowerCase().includes("death music") && author.includes("24/7");
         const componentMatch = m.components?.some(row => row.components?.some(component => String(component.customId || "").startsWith("death_music_")));
         return titleMatch || authorMatch || componentMatch;
       });
