@@ -107,9 +107,7 @@ client.once(Events.ClientReady, async readyClient => {
   });
 
   try {
-    const legacyMusicCommands = new Set(["queue"]);
     const commands = [...client.commands.values()]
-      .filter(command => !legacyMusicCommands.has(command.data.name))
       .map(command => command.data.toJSON());
     const rest = new REST({ version: "10" }).setToken(config.token);
     await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
