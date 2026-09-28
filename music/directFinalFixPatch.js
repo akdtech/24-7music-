@@ -829,7 +829,8 @@ function install() {
     state.intentionalLeave = false;
     state.autoplay = true;
     state.manualGeneration = Number(state.manualGeneration || 0) + 1;
-    // Cancel any in-flight autoplay decision before resolving the new search.
+    // A manual /play cancels any pending autoplay recovery, but it must NOT
+    // interrupt a song that is already playing. Manual searches are queued.
     state.autoplayBlockedUntil = Date.now() + 5000;
 
     const destination = guildId === this.musicGuildId
@@ -840,40 +841,74 @@ function install() {
     this.bindPlayerEvents(guildId, player);
 
     const result = await this.search(args.query, args.requester || this.client.user);
-    const tracks = Array.isArray(result?.tracks) ? result.tracks.slice(0, 5) : [];
+    const tracks = Array.isArray(result?.tracks) ? result.tracks.slice(0, 1) : [];
     if (!tracks.length) throw new Error(`Track not found for "${args.query}".`);
 
-    const live = player.state?.resource?.metadata || state.current;
-    const playing = Boolean(live && player.state.status !== AudioPlayerStatus.Idle);
+    const track = tracks[0];
+    track.isAutoplay = false;
+
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+
+    const status = player.state?.status;
+    const liveResource = player.state?.resource;
+    const liveTrack = liveResource?.metadata || state.current;
+    const activelyPlaying = Boolean(
+      liveTrack &&
+      liveResource &&
+      !liveResource.ended &&
+      [
+        AudioPlayerStatus.Playing,
+        AudioPlayerStatus.Paused,
+        AudioPlayerStatus.Buffering,
+        AudioPlayerStatus.AutoPaused
+      ].includes(status)
+    );
+
+    // If something is already playing/paused/buffering, append the requested
+    // track and leave the current audio resource completely untouched.
+    if (activelyPlaying || state.queue.length > 0 || state.transitioning) {
+      state.queue.push(track);
+      await this.refreshPanel(guildId).catch(() => {});
+      console.log(`📥 QUEUED: ${this.getTrackTitle(track)} | position=${state.queue.length} | guild=${guildId}`);
+      return {
+        type: "track",
+        tracks: [track],
+        track,
+        player: this.getPlayer(guildId),
+        startedNow: false,
+        queued: true,
+        queuePosition: state.queue.length
+      };
+    }
+
+    // Nothing is playing, so the requested song starts immediately.
+    state.autoplayContext = {
+      artist: clean(track.author),
+      title: clean(track.title),
+      query: clean(args.query),
+      words: clean(`${track.title} ${args.query}`).toLowerCase().split(/\s+/).filter(w => w.length >= 3).slice(0, 10)
+    };
+    state.autoplayBlockedUntil = 0;
+
     let lastError = null;
-
-    // Try several search results. One YouTube upload can be blocked while the
-    // next official/Topic upload is perfectly playable.
-    for (const track of tracks) {
-      track.isAutoplay = false;
-      try {
-        await this.startTrack(guildId, track, 0, { handoff: playing });
-        state.autoplayContext = {
-          artist: clean(track.author),
-          title: clean(track.title),
-          query: clean(args.query),
-          words: clean(`${track.title} ${args.query}`).toLowerCase().split(/\s+/).filter(w => w.length >= 3).slice(0, 10)
-        };
-        state.autoplayBlockedUntil = 0;
-        safePanel(this, guildId);
-        return { type: "track", tracks: [track], track, player: this.getPlayer(guildId), startedNow: true, queued: false };
-      } catch (error) {
-        lastError = error;
-        console.warn(`⚠️ Manual source failed; trying next result: ${clean(track.title)} — ${clean(error?.message || error).slice(-500)}`);
-      }
-    }
-
-    // If all sources failed, keep the current resource alive rather than
-    // replacing it with a dead state.
-    if (playing) {
-      state.transitioning = false;
+    try {
+      await this.startTrack(guildId, track, 0, { handoff: false });
       safePanel(this, guildId);
+      return {
+        type: "track",
+        tracks: [track],
+        track,
+        player: this.getPlayer(guildId),
+        startedNow: true,
+        queued: false
+      };
+    } catch (error) {
+      lastError = error;
     }
+
     throw lastError || new Error("No playable source was found for that search.");
   };
 
