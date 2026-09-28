@@ -16,9 +16,16 @@ module.exports = {
         query,
         requester: interaction.user
       });
+
       const track = result.track;
+      if (result.queued) {
+        return interaction.editReply(
+          `📥 **Queued #${result.queuePosition}:** **${track.title}** — **${track.author}**\\n🎵 It will play automatically when the current song finishes, or when you press **Skip**.`
+        );
+      }
+
       return interaction.editReply(
-        `▶️ **Now playing in Discord VC**\n🎵 **${track.title}** — **${track.author}**\n🎧 **DEATH Music 24/7**\n♾️ Autoplay: same artist/genre`
+        `▶️ **Now playing in Discord VC**\\n🎵 **${track.title}** — **${track.author}**\\n🎧 **DEATH Music 24/7**\\n♾️ Autoplay: same artist/genre`
       );
     } catch (error) {
       console.error("play error:", error);
