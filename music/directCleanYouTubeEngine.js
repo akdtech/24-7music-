@@ -309,12 +309,174 @@ async function resolveYouTube(track) {
   throw lastError || new Error("YouTube audio stream could not be resolved.");
 }
 
+async function startYouTubeViaYtDlp(manager, guildId, track, startMs, token, handoff) {
+  const state = manager.getState(guildId);
+  const player = manager.players.get(guildId) || manager.ensurePlayer(guildId);
+  manager.bindPlayerEvents(guildId, player);
+
+  const id = youtubeId(track?.url) || track?.id || track?.identifier;
+  if (!id) throw new Error("No YouTube video ID.");
+  const url = youtubeUrl(id);
+
+  // Download and pipe through yt-dlp itself instead of handing a signed
+  // googlevideo URL to a separate FFmpeg HTTP client. This keeps extraction,
+  // headers and the actual media request in the same yt-dlp process and avoids
+  // the current Railway/YouTube signed-URL 403 failure.
+  const profiles = [
+    { client: "android", format: "18" },
+    { client: "web_embedded", format: "bestaudio/best" },
+    { client: "web_music", format: "bestaudio/best" }
+  ];
+
+  let lastError = null;
+
+  for (const profile of profiles) {
+    let yt = null;
+    let ff = null;
+    try {
+      yt = spawn(YTDLP, [
+        ...ytArgs(profile.client),
+        url,
+        "--format", profile.format,
+        "--output", "-",
+        "--retries", "3",
+        "--fragment-retries", "3",
+        "--no-part"
+      ], { stdio: ["ignore", "pipe", "pipe"] });
+
+      ff = spawn(FFMPEG, [
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostdin",
+        "-i", "pipe:0",
+        ...(startMs > 0 ? ["-ss", String(startMs / 1000)] : []),
+        "-vn",
+        "-af", "aresample=48000:async=1:first_pts=0",
+        "-f", "s16le",
+        "-ar", "48000",
+        "-ac", "2",
+        "pipe:1"
+      ], { stdio: ["pipe", "pipe", "pipe"] });
+
+      let stderr = "";
+      yt.stderr.on("data", chunk => {
+        stderr += chunk.toString();
+        if (stderr.length > 5000) stderr = stderr.slice(-5000);
+      });
+      ff.stderr.on("data", chunk => {
+        stderr += chunk.toString();
+        if (stderr.length > 5000) stderr = stderr.slice(-5000);
+      });
+
+      yt.stdout.pipe(ff.stdin);
+
+      const first = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("yt-dlp stream timed out.")), 15000);
+        let done = false;
+
+        const fail = error => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        };
+
+        ff.stdout.once("data", chunk => {
+          if (!chunk?.length) return fail(new Error("YouTube returned empty audio."));
+          done = true;
+          clearTimeout(timer);
+          resolve(chunk);
+        });
+
+        yt.once("error", fail);
+        ff.once("error", fail);
+
+        yt.once("close", code => {
+          if (!done && code !== 0) fail(new Error("yt-dlp exited " + code + ": " + clean(stderr).slice(-500)));
+        });
+        ff.once("close", code => {
+          if (!done && code !== 0) fail(new Error("FFmpeg exited " + code + ": " + clean(stderr).slice(-500)));
+        });
+      });
+
+      if (state.playbackToken !== token) {
+        kill(yt);
+        kill(ff);
+        throw new Error("Playback attempt superseded.");
+      }
+
+      const oldStream = manager.streams.get(guildId);
+      const pcm = new PassThrough({ highWaterMark: 1024 * 1024 });
+      const resolvedTrack = {
+        ...track,
+        url: youtubeUrl(id),
+        source: "youtube",
+        title: track.title || "YouTube",
+        author: track.author || "YouTube"
+      };
+
+      const resource = createAudioResource(pcm, {
+        inputType: StreamType.Raw,
+        inlineVolume: true,
+        metadata: resolvedTrack
+      });
+
+      resource.volume?.setVolume(Math.max(0.01, Number(state.volume || 70) / 100));
+
+      state.current = resolvedTrack;
+      state.pendingTrack = null;
+      state.audioResource = resource;
+      state.transitioning = false;
+      state.paused = false;
+      state.startedAt = Date.now();
+      state.positionOffset = Math.max(0, Number(startMs || 0));
+
+      manager.streams.set(guildId, {
+        ff,
+        yt,
+        pcm,
+        resource,
+        source: "youtube"
+      });
+
+      pcm.write(first);
+      ff.stdout.pipe(pcm);
+      player.play(resource);
+
+      if (handoff && oldStream && oldStream !== manager.streams.get(guildId)) {
+        try { oldStream.ff?.kill?.("SIGKILL"); } catch {}
+        try { oldStream.yt?.kill?.("SIGKILL"); } catch {}
+        try { oldStream.pcm?.destroy?.(); } catch {}
+      }
+
+      Promise.resolve(manager.updateVoiceStatus?.(guildId, "🎵 " + manager.getTrackTitle(resolvedTrack))).catch(() => {});
+      Promise.resolve(manager.refreshPanel?.(guildId)).catch(() => {});
+      console.log("🎧 YouTube playback started via yt-dlp stream: " + manager.getTrackTitle(resolvedTrack));
+      return true;
+    } catch (error) {
+      lastError = error;
+      kill(yt);
+      kill(ff);
+      const safe = clean(error?.message || error).replace(/https?:\/\/[^\s]+/gi, "[youtube-stream-url-redacted]");
+      console.warn("⚠️ YouTube yt-dlp stream " + profile.client + " (" + profile.format + ") failed: " + safe.slice(-500));
+    }
+  }
+
+  throw lastError || new Error("YouTube streaming failed.");
+}
+
 async function startYouTube(manager, guildId, track, startMs, token, handoff) {
   const state = manager.getState(guildId);
   const player = manager.players.get(guildId) || manager.ensurePlayer(guildId);
   manager.bindPlayerEvents(guildId, player);
 
-  const resolved = await resolveYouTube(track);
+  let resolved;
+  try {
+    resolved = await resolveYouTube(track);
+  } catch (error) {
+    console.warn("⚠️ Direct YouTube URL resolution failed; switching to yt-dlp streaming fallback.");
+    return startYouTubeViaYtDlp(manager, guildId, track, startMs, token, handoff);
+  }
 
   if (state.playbackToken !== token) {
     throw new Error("Playback attempt superseded.");
