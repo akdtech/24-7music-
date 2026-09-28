@@ -650,23 +650,73 @@ class DirectMusicManager {
     const clean = this.cleanQuery(query);
     if (!clean) throw new Error("Please provide a song name or URL.");
 
-    // /play follows the voice channel of the user who invoked it.
-    // The configured 24/7 channel remains the startup/default channel; it is
-    // no longer forced for manual /play requests.
+    // /play always follows the voice channel of the user who invoked it.
+    // IMPORTANT: manual /play NEVER interrupts the song already playing.
     const destinationVoice = voiceId;
     if (!destinationVoice) throw new Error("Join a voice channel first, then use /play.");
 
     const state = this.getState(guildId);
     state.activeVoiceChannelId = destinationVoice;
+
     const player = await this.ensureConnection(guildId, destinationVoice).then(() => this.ensurePlayer(guildId));
     this.bindPlayerEvents(guildId, player);
 
+    // Search first. The existing audio resource keeps playing while the
+    // search is happening.
     const result = await this.search(clean, requester);
     const track = result.tracks[0];
     if (!track) throw new Error(`Track not found for "${clean}".`);
 
-    state.manualGeneration++;
     track.isAutoplay = false;
+    track.requester = requester
+      ? { id: requester.id, username: requester.username }
+      : null;
+
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+
+    const liveResource = player.state?.resource;
+    const liveTrack = liveResource?.metadata || state.current;
+    const activeStatuses = new Set([
+      AudioPlayerStatus.Playing,
+      AudioPlayerStatus.Paused,
+      AudioPlayerStatus.Buffering,
+      AudioPlayerStatus.AutoPaused
+    ]);
+
+    const isCurrentlyPlaying = Boolean(
+      liveTrack &&
+      liveResource &&
+      !liveResource.ended &&
+      activeStatuses.has(player.state.status)
+    );
+
+    // If a song is currently playing, append the searched song to the FIFO
+    // queue. Do NOT call startTrack() here — that is what used to interrupt
+    // the current song.
+    if (isCurrentlyPlaying || state.current) {
+      state.queue.push(track);
+      await this.refreshPanel(guildId).catch(() => {});
+
+      console.log(
+        `📥 QUEUED: ${this.getTrackTitle(track)} | position=${state.queue.length} | guild=${guildId}`
+      );
+
+      return {
+        type: "track",
+        tracks: [track],
+        track,
+        player: this.getPlayer(guildId),
+        startedNow: false,
+        queued: true,
+        queuePosition: state.queue.length
+      };
+    }
+
+    // Nothing is playing: start the requested song immediately.
+    state.manualGeneration++;
     state.autoplayContext = {
       title: track.title,
       author: track.author,
@@ -674,14 +724,7 @@ class DirectMusicManager {
       id: this.getTrackId(track)
     };
 
-    // A manual /play is an immediate handoff. Do not wait behind an autoplay
-    // track or an old queue entry; the requested song becomes the new source.
-    state.queue = [];
-    if (state.retryTimer) {
-      clearTimeout(state.retryTimer);
-      state.retryTimer = null;
-    }
-    await this.startTrack(guildId, track, 0, { handoff: true });
+    await this.startTrack(guildId, track, 0, { handoff: false });
 
     return {
       type: "track",
@@ -692,7 +735,6 @@ class DirectMusicManager {
       queued: false
     };
   }
-
   async startTrack(guildId, track, startMs = 0, options = {}) {
     const state = this.getState(guildId);
     const player = this.players.get(guildId) || this.ensurePlayer(guildId);
