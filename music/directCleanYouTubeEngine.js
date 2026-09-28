@@ -252,12 +252,15 @@ async function resolveYouTube(track) {
   // YouTube is currently returning 403/SABR URLs for several web clients.
   // Prefer the Android client first because it currently provides a direct
   // CDN audio URL more reliably, then use the web clients as fallbacks.
+  // YouTube has been intermittently returning SABR-only streams and
+  // signed CDN URLs that later 403 from the Railway egress IP. The current
+  // reliable logged-out workaround is the pre-merged Android format 18.
+  // Keep normal clients as fallbacks, but do not prefer mweb anymore.
   const profiles = [
-    "android",
-    "web_music,web_embedded",
-    "web_creator,web_embedded",
-    "web_safari",
-    "mweb"
+    { client: "android", format: "18" },
+    { client: "web_music,web_embedded", format: "bestaudio[ext=m4a]/bestaudio" },
+    { client: "web_creator,web_embedded", format: "bestaudio[ext=m4a]/bestaudio" },
+    { client: "web_safari", format: "bestaudio[ext=m4a]/bestaudio" }
   ];
 
   let lastError = null;
@@ -270,10 +273,10 @@ async function resolveYouTube(track) {
           "--dump-single-json",
           "--skip-download",
           "--format",
-          "bestaudio/best"
+          profile.format
         ],
         10000,
-        profile
+        profile.client
       );
 
       const info = parseJsonOutput(result.stdout || "{}");
@@ -289,7 +292,7 @@ async function resolveYouTube(track) {
         .map(([key, value]) => key + ": " + value)
         .join("\r\n");
 
-      console.log("🔑 YouTube stream resolved with " + profile);
+      console.log("🔑 YouTube stream resolved with " + profile.client + " (" + profile.format + ")");
       return { url: mediaUrl, headers };
     } catch (error) {
       lastError = error;
@@ -297,7 +300,7 @@ async function resolveYouTube(track) {
         .replace(/https?:\/\/[^\s]+/gi, "[youtube-stream-url-redacted]")
         .replace(/(?:expire|ei|ip|id|itag|source|requiressl|xpc|pcm2|bui|spc|vprv|svpuc|mime|ns|rqh|gir|clen|ratebypass|dur|lmt|mt|fvip|fexp|c|sefc|txp|n|sparams|lsparams|lsig|sig)=[^\s&]+/gi, "[redacted]");
       console.warn(
-        "⚠️ YouTube resolve " + profile + " failed: " +
+        "⚠️ YouTube resolve " + profile.client + " (" + profile.format + ") failed: " +
         safeError.slice(-500)
       );
     }
