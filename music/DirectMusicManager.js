@@ -818,6 +818,14 @@ class DirectMusicManager {
 
     const next = state.queue.shift();
     if (next) {
+      // The queued track becomes the new autoplay context once it starts.
+      // This keeps post-queue autoplay tied to the track the listener just heard.
+      state.autoplayContext = {
+        title: next.title,
+        author: next.author,
+        genre: next.genre || null,
+        id: this.getTrackId(next)
+      };
       await this.startTrack(guildId, next).catch(error => console.warn("⚠️ Next track failed:", error?.message || error));
       return;
     }
