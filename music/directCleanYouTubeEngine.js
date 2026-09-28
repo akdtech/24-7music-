@@ -515,7 +515,9 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
     if (stderr.length > 5000) stderr = stderr.slice(-5000);
   });
 
-  const first = await new Promise((resolve, reject) => {
+  let first;
+  try {
+    first = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       kill(ff);
       const safeStderr = clean(stderr)
@@ -551,10 +553,16 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
         fail(new Error("FFmpeg exited " + code + ": " + safeStderr.slice(-700)));
       }
     });
-  }).catch(error => {
-    kill(ff);
-    throw error;
   });
+  } catch (error) {
+    kill(ff);
+    const message = clean(error?.message || error);
+    if (/403 forbidden|access denied/i.test(message)) {
+      console.warn("⚠️ YouTube CDN returned 403; switching to yt-dlp streaming fallback.");
+      return startYouTubeViaYtDlp(manager, guildId, track, startMs, token, handoff);
+    }
+    throw error;
+  }
 
   if (state.playbackToken !== token) {
     kill(ff);
