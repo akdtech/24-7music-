@@ -477,10 +477,21 @@ class DirectMusicManager {
 
     const existing = this.connections.get(guildId);
     if (existing && existing.state.status !== VoiceConnectionStatus.Destroyed) {
-      try {
-        await entersState(existing, VoiceConnectionStatus.Ready, 10000);
-        return existing;
-      } catch {}
+      const existingVoiceId = existing.joinConfig?.channelId || null;
+
+      // Keep the current connection when /play targets the same channel.
+      // If /play was issued from another voice channel, replace the existing
+      // guild connection so the bot follows the user instead of being pinned
+      // to the configured 24/7 channel.
+      if (existingVoiceId === voiceId) {
+        try {
+          await entersState(existing, VoiceConnectionStatus.Ready, 10000);
+          return existing;
+        } catch {}
+      }
+
+      try { existing.destroy(); } catch {}
+      this.connections.delete(guildId);
     }
 
     const connection = joinVoiceChannel({
@@ -492,6 +503,7 @@ class DirectMusicManager {
     });
 
     this.connections.set(guildId, connection);
+    this.getState(guildId).activeVoiceChannelId = voiceId;
     connection.on("error", error => console.warn(`⚠️ Voice connection error [${guildId}]:`, error?.message || error));
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       const state = this.getState(guildId);
@@ -638,10 +650,14 @@ class DirectMusicManager {
     const clean = this.cleanQuery(query);
     if (!clean) throw new Error("Please provide a song name or URL.");
 
-    const destinationVoice = guildId === this.musicGuildId ? this.musicVoiceChannelId : voiceId;
-    if (!destinationVoice) throw new Error("No voice channel is available.");
+    // /play follows the voice channel of the user who invoked it.
+    // The configured 24/7 channel remains the startup/default channel; it is
+    // no longer forced for manual /play requests.
+    const destinationVoice = voiceId;
+    if (!destinationVoice) throw new Error("Join a voice channel first, then use /play.");
 
     const state = this.getState(guildId);
+    state.activeVoiceChannelId = destinationVoice;
     const player = await this.ensureConnection(guildId, destinationVoice).then(() => this.ensurePlayer(guildId));
     this.bindPlayerEvents(guildId, player);
 
@@ -1220,11 +1236,27 @@ class DirectMusicManager {
   async handleVoiceStateUpdate(oldState, newState) {
     if (newState.guild?.id !== this.musicGuildId) return;
     if (newState.id !== this.client.user?.id) return;
+
     const state = this.getState(newState.guild.id);
     if (state.intentionalLeave) return;
-    if (newState.channelId !== this.musicVoiceChannelId) {
-      console.warn("🟠 DEATH was moved/disconnected from the permanent music channel; reconnecting.");
-      await this.reconnect(newState.guild.id, this.musicVoiceChannelId).catch(() => {});
+
+    // Manual /play can move DEATH to any voice channel. Never force it back
+    // to the configured permanent channel after that move.
+    if (newState.channelId) {
+      state.activeVoiceChannelId = newState.channelId;
+      return;
+    }
+
+    // If Discord actually disconnected the bot, recover to the last active
+    // channel (which may have been selected by /play).
+    const recoveryVoiceId =
+      state.activeVoiceChannelId ||
+      this.connections.get(newState.guild.id)?.joinConfig?.channelId ||
+      this.musicVoiceChannelId;
+
+    if (recoveryVoiceId) {
+      console.warn("🟠 DEATH was disconnected from voice; reconnecting to the active music channel.");
+      await this.reconnect(newState.guild.id, recoveryVoiceId).catch(() => {});
     }
   }
 
