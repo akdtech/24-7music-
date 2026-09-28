@@ -249,12 +249,15 @@ async function resolveYouTube(track) {
   if (!id) throw new Error("No YouTube video ID.");
 
   const url = youtubeUrl(id);
+  // YouTube is currently returning 403/SABR URLs for several web clients.
+  // Prefer the Android client first because it currently provides a direct
+  // CDN audio URL more reliably, then use the web clients as fallbacks.
   const profiles = [
+    "android",
     "web_music,web_embedded",
     "web_creator,web_embedded",
     "web_safari",
-    "mweb",
-    "android_vr"
+    "mweb"
   ];
 
   let lastError = null;
@@ -290,9 +293,12 @@ async function resolveYouTube(track) {
       return { url: mediaUrl, headers };
     } catch (error) {
       lastError = error;
+      const safeError = clean(error?.message || error)
+        .replace(/https?:\/\/[^\s]+/gi, "[youtube-stream-url-redacted]")
+        .replace(/(?:expire|ei|ip|id|itag|source|requiressl|xpc|pcm2|bui|spc|vprv|svpuc|mime|ns|rqh|gir|clen|ratebypass|dur|lmt|mt|fvip|fexp|c|sefc|txp|n|sparams|lsparams|lsig|sig)=[^\s&]+/gi, "[redacted]");
       console.warn(
         "⚠️ YouTube resolve " + profile + " failed: " +
-        clean(error?.message || error).slice(-500)
+        safeError.slice(-500)
       );
     }
   }
@@ -347,9 +353,12 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
   const first = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       kill(ff);
+      const safeStderr = clean(stderr)
+        .replace(/https?:\/\/[^\s]+/gi, "[youtube-stream-url-redacted]")
+        .replace(/(?:expire|ei|ip|id|itag|source|requiressl|xpc|pcm2|bui|spc|vprv|svpuc|mime|ns|rqh|gir|clen|ratebypass|dur|lmt|mt|fvip|fexp|c|sefc|txp|n|sparams|lsparams|lsig|sig)=[^\s&]+/gi, "[redacted]");
       reject(new Error(
         "YouTube produced no audio within 12 seconds. " +
-        clean(stderr).slice(-700)
+        safeStderr.slice(-700)
       ));
     }, 12000);
 
@@ -371,7 +380,10 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
     ff.once("error", fail);
     ff.once("close", code => {
       if (!done && code !== 0) {
-        fail(new Error("FFmpeg exited " + code + ": " + clean(stderr).slice(-700)));
+        const safeStderr = clean(stderr)
+          .replace(/https?:\/\/[^\s]+/gi, "[youtube-stream-url-redacted]")
+          .replace(/(?:expire|ei|ip|id|itag|source|requiressl|xpc|pcm2|bui|spc|vprv|svpuc|mime|ns|rqh|gir|clen|ratebypass|dur|lmt|mt|fvip|fexp|c|sefc|txp|n|sparams|lsparams|lsig|sig)=[^\s&]+/gi, "[redacted]");
+        fail(new Error("FFmpeg exited " + code + ": " + safeStderr.slice(-700)));
       }
     });
   }).catch(error => {
