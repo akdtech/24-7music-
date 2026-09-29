@@ -69,6 +69,8 @@ class DirectMusicManager {
     this.streams = new Map();
     this.recoveryTimer = null;
     this.recoveryStarted = false;
+    this.connectionOperations = new Map();
+    this.reconnectPromises = new Map();
 
     this.musicVoiceChannelId =
       process.env.MUSIC_VOICE_CHANNEL_ID ||
@@ -470,12 +472,16 @@ class DirectMusicManager {
   }
 
   async ensureConnection(guildId, voiceId) {
-    const guild = this.client.guilds.cache.get(guildId);
-    if (!guild) throw new Error("Server is not available.");
-    const channel = guild.channels.cache.get(voiceId);
-    if (!channel?.isVoiceBased?.()) throw new Error("Configured music voice channel is invalid.");
+    const active = this.connectionOperations.get(guildId);
+    if (active) return active;
 
-    const existing = this.connections.get(guildId);
+    const operation = (async () => {
+      const guild = this.client.guilds.cache.get(guildId);
+      if (!guild) throw new Error("Server is not available.");
+      const channel = guild.channels.cache.get(voiceId);
+      if (!channel?.isVoiceBased?.()) throw new Error("Configured music voice channel is invalid.");
+
+      const existing = this.connections.get(guildId);
     if (existing && existing.state.status !== VoiceConnectionStatus.Destroyed) {
       const existingVoiceId = existing.joinConfig?.channelId || null;
 
@@ -505,15 +511,28 @@ class DirectMusicManager {
     this.connections.set(guildId, connection);
     this.getState(guildId).activeVoiceChannelId = voiceId;
     connection.on("error", error => console.warn(`⚠️ Voice connection error [${guildId}]:`, error?.message || error));
-    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    connection.on(VoiceConnectionStatus.Disconnected, () => {
       const state = this.getState(guildId);
       if (state.intentionalLeave) return;
-      console.warn(`🟠 Discord voice disconnected [${guildId}], attempting recovery.`);
-      await this.reconnect(guildId, voiceId).catch(error => console.warn("⚠️ Voice recovery failed:", error?.message || error));
+      if (this.connections.get(guildId) !== connection) return;
+      console.warn(`🟠 Discord voice disconnected [${guildId}], scheduling recovery.`);
+      this.reconnect(guildId, voiceId).catch(error =>
+        console.warn("⚠️ Voice recovery failed:", error?.message || error)
+      );
     });
 
-    await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-    return connection;
+      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+      return connection;
+    })();
+
+    this.connectionOperations.set(guildId, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.connectionOperations.get(guildId) === operation) {
+        this.connectionOperations.delete(guildId);
+      }
+    }
   }
 
   ensurePlayer(guildId) {
@@ -640,16 +659,48 @@ class DirectMusicManager {
   }
 
   async reconnect(guildId, voiceId) {
-    const state = this.getState(guildId);
-    if (state.intentionalLeave) return;
-    const old = this.connections.get(guildId);
-    try { old?.destroy(); } catch {}
-    this.connections.delete(guildId);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    await this.ensureConnection(guildId, voiceId);
-    const player = this.ensurePlayer(guildId);
-    this.bindPlayerEvents(guildId, player);
-    if (!state.current && !state.queue.length && state.autoplay) await this.autoplayNext(guildId).catch(() => {});
+    const existing = this.reconnectPromises.get(guildId);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      const state = this.getState(guildId);
+      if (state.intentionalLeave) return;
+
+      // Give Discord voice a brief chance to recover the existing connection
+      // before destroying it. This avoids racing /play against a transient
+      // Disconnected state.
+      const current = this.connections.get(guildId);
+      if (current && current.state.status === VoiceConnectionStatus.Disconnected) {
+        try {
+          current.rejoin({ channelId: voiceId });
+          await entersState(current, VoiceConnectionStatus.Ready, 5000);
+          this.ensurePlayer(guildId);
+          return;
+        } catch {}
+      }
+
+      const old = this.connections.get(guildId);
+      try { old?.destroy(); } catch {}
+      if (this.connections.get(guildId) === old) this.connections.delete(guildId);
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await this.ensureConnection(guildId, voiceId);
+      const player = this.ensurePlayer(guildId);
+      this.bindPlayerEvents(guildId, player);
+
+      if (!state.current && !state.queue.length && state.autoplay) {
+        await this.autoplayNext(guildId).catch(() => {});
+      }
+    })();
+
+    this.reconnectPromises.set(guildId, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.reconnectPromises.get(guildId) === promise) {
+        this.reconnectPromises.delete(guildId);
+      }
+    }
   }
 
   async leave(guildId) {
