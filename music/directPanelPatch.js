@@ -119,8 +119,23 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
         }
       }
 
-      if (message) await message.edit(payload);
-      else {
+      if (message) {
+        try {
+          await message.edit(payload);
+        } catch (error) {
+          // The panel may have been deleted between fetch and edit. Clear the
+          // stale ID and recreate it once instead of leaving the panel broken.
+          if (error?.code === 10008 || /Unknown Message/i.test(String(error?.message || ""))) {
+            state.panelMessageId = null;
+            state.panelChannelId = null;
+            message = await channel.send(payload);
+            state.panelMessageId = message.id;
+            state.panelChannelId = channel.id;
+          } else {
+            throw error;
+          }
+        }
+      } else {
         message = await channel.send(payload);
         state.panelMessageId = message.id;
         state.panelChannelId = channel.id;
