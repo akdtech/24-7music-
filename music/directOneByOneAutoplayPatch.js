@@ -74,6 +74,7 @@ function toTrack(entry, requester) {
     url: "https://www.youtube.com/watch?v=" + entry.id,
     title: titleOf(entry),
     author: clean(entry.uploader || entry.channel || entry.creator) || "Unknown artist",
+    genre: clean(entry.genre || entry.category || ""),
     length: Number(entry.duration || 0) * 1000,
     requester: requester || null,
     thumbnail: entry.thumbnail || "https://i.ytimg.com/vi/" + entry.id + "/hqdefault.jpg",
@@ -86,15 +87,21 @@ async function findNext(manager, state) {
   const ctx = state.autoplayContext || {};
   const artist = clean(ctx.artist || ctx.author);
   const title = clean(ctx.title);
+  const genre = clean(ctx.genre);
   const query = clean(ctx.query);
 
+  // Autoplay context is always the song that just finished. When a manual
+  // queue drains, DirectMusicManager updates this context to the last queued
+  // song before calling us, so the chain follows A -> queued B -> related C.
   const seeds = [];
+  if (artist && genre) seeds.push(artist + " " + genre + " official audio");
   if (artist) {
     seeds.push(artist + " official songs");
-    seeds.push(artist + " official audio");
     seeds.push(artist + " related songs official audio");
   }
+  if (title && artist) seeds.push(title + " " + artist + " similar songs official audio");
   if (title) seeds.push(title + " related songs official audio");
+  if (genre) seeds.push(genre + " similar songs official audio");
   if (query) seeds.push(query + " similar songs official audio");
   if (!seeds.length) {
     seeds.push("popular songs official audio");
@@ -105,6 +112,12 @@ async function findNext(manager, state) {
   // different uploads of the same song from looping forever.
   const recentIds = new Set(Array.isArray(state.recent) ? state.recent.map(String) : []);
   const recentSongs = new Set(Array.isArray(state.recentSongs) ? state.recentSongs.map(String) : []);
+
+  // Also remember the exact song that supplied the autoplay context. This
+  // matters when the last queued song just ended: it must not immediately
+  // become the next autoplay pick.
+  if (ctx.id) recentIds.add(String(ctx.id));
+  if (ctx.title || ctx.author) recentSongs.add(norm(ctx.title + " " + (ctx.artist || ctx.author || "")));
 
   if (state.current) {
     recentIds.add(idOf(state.current));
@@ -138,8 +151,22 @@ async function findNext(manager, state) {
         const trackArtist = artistOf(track);
         const trackTitle = titleOf(track);
 
-        // Same artist is the strongest relationship.
+        // Same artist is the strongest relationship. Same genre is
+        // the next relationship when YouTube exposes a genre/category hint.
         if (artist && sameArtist(trackArtist, artist)) score += 500;
+        if (genre && norm(track.genre) === genre) score += 180;
+
+        // The current song itself is a strong signal. This keeps autoplay
+        // attached to the song that just ended instead of drifting into a
+        // generic "popular songs" list.
+        const contextWords = new Set(
+          norm(title + " " + artist)
+            .split(" ")
+            .filter(word => word.length >= 3)
+        );
+        for (const word of contextWords) {
+          if (norm(trackTitle + " " + trackArtist).includes(word)) score += 12;
+        }
 
         // Prefer official/topic/VEVO uploads without forcing one specific
         // channel or artist.
@@ -170,8 +197,16 @@ async function findNext(manager, state) {
   // Don't always select the first YouTube result. Choose among the strongest
   // few candidates so autoplay actually moves through different songs.
   const topScore = candidates[0].score;
-  const pool = candidates.filter(item => item.score >= Math.max(0, topScore - 80)).slice(0, 8);
-  const selected = pool[Math.floor(Math.random() * pool.length)] || candidates[0];
+
+  // Never fall back to an unrelated random YouTube result. Autoplay must
+  // stay tied to the previous song by artist, genre, or song-context terms.
+  const related = candidates.filter(item => item.score > 0);
+  if (!related.length) return null;
+
+  const pool = related
+    .filter(item => item.score >= Math.max(1, topScore - 80))
+    .slice(0, 8);
+  const selected = pool[Math.floor(Math.random() * pool.length)] || related[0];
   return selected.track;
 }
 
