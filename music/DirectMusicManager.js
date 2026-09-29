@@ -576,12 +576,10 @@ class DirectMusicManager {
   }
 
   setupPlayerEvents() {
+    // Startup ownership lives in index-direct.js (clientReady). Keeping a
+    // second startup listener here races the voice handshake and can destroy
+    // the UDP socket while Discord is still performing IP discovery.
     this.client.on("ready", () => {
-      for (const guild of this.client.guilds.cache.values()) {
-        if (guild.id === this.musicGuildId) {
-          this.ensure247(guild.id).catch(error => console.error("❌ Direct music startup:", error?.message || error));
-        }
-      }
       this.startRecoveryLoop();
     });
   }
@@ -1362,8 +1360,22 @@ class DirectMusicManager {
         const state = this.getState(guildId);
         if (!state.permanent || state.intentionalLeave) continue;
         const connection = this.connections.get(guildId);
-        if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed) {
-          this.ensure247(guildId).catch(() => {});
+        if (connection?.state.status === VoiceConnectionStatus.Disconnected) {
+          const voiceId =
+            state.activeVoiceChannelId ||
+            connection.joinConfig?.channelId ||
+            this.musicVoiceChannelId;
+          this.reconnect(guildId, voiceId).catch(error =>
+            console.warn("⚠️ Recovery loop voice reconnect failed:", error?.message || error)
+          );
+        } else if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed) {
+          // No connection exists at all; create one. Do not call ensure247 while
+          // a reconnect is already in progress.
+          if (!this.reconnectPromises.has(guildId)) {
+            this.ensure247(guildId).catch(error =>
+              console.warn("⚠️ Recovery loop startup failed:", error?.message || error)
+            );
+          }
         }
       }
     }, 30000);
