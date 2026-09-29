@@ -194,7 +194,6 @@ async function findNext(manager, state) {
           score,
           relation: artistMatch ? "Same Artist" : genreMatch ? "Same Genre" : contextMatches >= 2 ? "Song Context" : "Unrelated"
         });
-        candidates.push({ track, score });
       }
     } catch (error) {
       console.warn("⚠️ Related autoplay search failed:", error?.message || error);
@@ -217,6 +216,24 @@ async function findNext(manager, state) {
     sameArtistCandidates.length ? sameArtistCandidates :
     sameGenreCandidates.length ? sameGenreCandidates :
     contextualCandidates;
+
+  if (!related.length && !hasContext) {
+    // First boot has no previous song to relate to. Allow one clean YouTube
+    // seed track to start the 24/7 radio; after this track starts, all future
+    // autoplay must use the strict artist/genre/context rules above.
+    const startupCandidates = candidates
+      .filter(item => item.relation === "Unrelated")
+      .sort((a, b) => b.score - a.score);
+
+    if (startupCandidates.length) {
+      const selected = startupCandidates[0];
+      console.log(
+        "🎯 Autoplay startup selected: " + titleOf(selected.track) +
+        " [Initial 24/7 seed]"
+      );
+      return selected.track;
+    }
+  }
 
   if (!related.length) {
     console.warn("⚠️ No artist/genre/context match for autoplay; refusing unrelated track.");
