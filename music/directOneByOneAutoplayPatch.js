@@ -177,7 +177,7 @@ async function findNext(manager, state) {
 
         // Prefer official/topic/VEVO uploads without allowing this signal
         // to turn an unrelated song into an autoplay candidate.
-        if (/\\b(official|vevo|topic)\\b/i.test(trackArtist + " " + trackTitle)) score += 30;
+        if (/\b(official|vevo|topic)\b/i.test(trackArtist + " " + trackTitle)) score += 30;
 
         const wantedWords = new Set(
           norm(title + " " + query)
