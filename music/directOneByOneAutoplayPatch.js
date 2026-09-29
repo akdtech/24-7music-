@@ -89,6 +89,7 @@ async function findNext(manager, state) {
   const title = clean(ctx.title);
   const genre = clean(ctx.genre);
   const query = clean(ctx.query);
+  const hasContext = Boolean(artist || title || genre || query);
 
   console.log(
     "🧭 Autoplay context: " + (title || "Unknown") +
