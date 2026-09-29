@@ -363,6 +363,22 @@ async function startYouTubeViaYtDlp(manager, guildId, track, startMs, token, han
         stderr += chunk.toString();
         if (stderr.length > 5000) stderr = stderr.slice(-5000);
       });
+
+      // FFmpeg can finish while yt-dlp is still writing. Without an error
+      // listener on the writable stdin pipe, that normal teardown can surface
+      // as an uncaught EPIPE and restart the entire bot, which loses the
+      // queued-track autoplay context.
+      ff.stdin.on("error", error => {
+        if (error?.code !== "EPIPE") {
+          console.warn("⚠️ YouTube FFmpeg stdin error:", error?.message || error);
+        }
+      });
+      yt.stdout.on("error", error => {
+        if (error?.code !== "EPIPE") {
+          console.warn("⚠️ YouTube yt-dlp stdout error:", error?.message || error);
+        }
+      });
+
       ff.stderr.on("data", chunk => {
         stderr += chunk.toString();
         if (stderr.length > 5000) stderr = stderr.slice(-5000);
