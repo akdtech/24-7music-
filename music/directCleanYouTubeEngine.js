@@ -1,5 +1,15 @@
 "use strict";
 
+if (!process.__deathEpipeGuard) {
+  process.__deathEpipeGuard = true;
+  process.on("uncaughtException", error => {
+    if (error?.code === "EPIPE") {
+      console.warn("⚠️ Ignored stream teardown EPIPE; keeping music process alive.");
+      return;
+    }
+    throw error;
+  });
+}
 /*
  * DEATH Music — CLEAN YOUTUBE ENGINE
  *
@@ -440,6 +450,17 @@ async function startYouTubeViaYtDlp(manager, guildId, track, startMs, token, han
       resource.volume?.setVolume(Math.max(0.01, Number(state.volume || 70) / 100));
 
       state.current = resolvedTrack;
+      if (!resolvedTrack.isAutoplay) {
+        state.autoplayContext = {
+          title: resolvedTrack.title,
+          author: resolvedTrack.author,
+          artist: resolvedTrack.author,
+          genre: resolvedTrack.genre || null,
+          query: resolvedTrack.title + " " + resolvedTrack.author,
+          id: manager.getTrackId(resolvedTrack)
+        };
+        console.log("🧭 Playback context updated: " + resolvedTrack.title + " — " + resolvedTrack.author);
+      }
       state.pendingTrack = null;
       state.audioResource = resource;
       state.transitioning = false;
@@ -606,6 +627,17 @@ async function startYouTube(manager, guildId, track, startMs, token, handoff) {
   );
 
   state.current = resolvedTrack;
+  if (!resolvedTrack.isAutoplay) {
+    state.autoplayContext = {
+      title: resolvedTrack.title,
+      author: resolvedTrack.author,
+      artist: resolvedTrack.author,
+      genre: resolvedTrack.genre || null,
+      query: resolvedTrack.title + " " + resolvedTrack.author,
+      id: manager.getTrackId(resolvedTrack)
+    };
+    console.log("🧭 Playback context updated: " + resolvedTrack.title + " — " + resolvedTrack.author);
+  }
   state.pendingTrack = null;
   state.audioResource = resource;
   state.transitioning = false;
