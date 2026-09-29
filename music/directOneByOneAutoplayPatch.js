@@ -90,6 +90,12 @@ async function findNext(manager, state) {
   const genre = clean(ctx.genre);
   const query = clean(ctx.query);
 
+  console.log(
+    "🧭 Autoplay context: " + (title || "Unknown") +
+    " — " + (artist || "Unknown artist") +
+    (genre ? " [" + genre + "]" : "")
+  );
+
   // Autoplay context is always the song that just finished. When a manual
   // queue drains, DirectMusicManager updates this context to the last queued
   // song before calling us, so the chain follows A -> queued B -> related C.
@@ -150,39 +156,44 @@ async function findNext(manager, state) {
         let score = 0;
         const trackArtist = artistOf(track);
         const trackTitle = titleOf(track);
+        const trackGenre = norm(track.genre);
 
-        // Same artist is the strongest relationship. Same genre is
-        // the next relationship when YouTube exposes a genre/category hint.
-        if (artist && sameArtist(trackArtist, artist)) score += 500;
-        if (genre && norm(track.genre) === genre) score += 180;
+        // Build explicit relationship tiers. We must NEVER choose a generic
+        // result just because it happened to score well.
+        const artistMatch = !!(artist && sameArtist(trackArtist, artist));
+        const genreMatch = !!(genre && trackGenre && trackGenre === genre);
 
-        // The current song itself is a strong signal. This keeps autoplay
-        // attached to the song that just ended instead of drifting into a
-        // generic "popular songs" list.
         const contextWords = new Set(
           norm(title + " " + artist)
             .split(" ")
             .filter(word => word.length >= 3)
         );
-        for (const word of contextWords) {
-          if (norm(trackTitle + " " + trackArtist).includes(word)) score += 12;
-        }
+        const hay = norm(trackTitle + " " + trackArtist);
+        const contextMatches = [...contextWords].filter(word => hay.includes(word)).length;
 
-        // Prefer official/topic/VEVO uploads without forcing one specific
-        // channel or artist.
-        if (/\b(official|vevo|topic)\b/i.test(trackArtist + " " + trackTitle)) score += 30;
+        if (artistMatch) score += 1000;
+        else if (genreMatch) score += 700;
+        else if (contextMatches >= 2) score += 120;
 
-        // Preserve useful words from the original search/context.
+        // Prefer official/topic/VEVO uploads without allowing this signal
+        // to turn an unrelated song into an autoplay candidate.
+        if (/\\b(official|vevo|topic)\\b/i.test(trackArtist + " " + trackTitle)) score += 30;
+
         const wantedWords = new Set(
           norm(title + " " + query)
             .split(" ")
             .filter(word => word.length >= 3)
         );
-        const hay = norm(trackTitle + " " + trackArtist);
         for (const word of wantedWords) {
           if (hay.includes(word)) score += 8;
         }
 
+        // Store the relationship explicitly so selection can enforce it.
+        candidates.push({
+          track,
+          score,
+          relation: artistMatch ? "Same Artist" : genreMatch ? "Same Genre" : contextMatches >= 2 ? "Song Context" : "Unrelated"
+        });
         candidates.push({ track, score });
       }
     } catch (error) {
@@ -196,17 +207,34 @@ async function findNext(manager, state) {
 
   // Don't always select the first YouTube result. Choose among the strongest
   // few candidates so autoplay actually moves through different songs.
-  const topScore = candidates[0].score;
+  // Strict priority: same artist > same genre > meaningful song context.
+  // Unrelated search results are never eligible.
+  const sameArtistCandidates = candidates.filter(item => item.relation === "Same Artist");
+  const sameGenreCandidates = candidates.filter(item => item.relation === "Same Genre");
+  const contextualCandidates = candidates.filter(item => item.relation === "Song Context");
 
-  // Never fall back to an unrelated random YouTube result. Autoplay must
-  // stay tied to the previous song by artist, genre, or song-context terms.
-  const related = candidates.filter(item => item.score > 0);
-  if (!related.length) return null;
+  const related =
+    sameArtistCandidates.length ? sameArtistCandidates :
+    sameGenreCandidates.length ? sameGenreCandidates :
+    contextualCandidates;
 
+  if (!related.length) {
+    console.warn("⚠️ No artist/genre/context match for autoplay; refusing unrelated track.");
+    return null;
+  }
+
+  related.sort((a, b) => b.score - a.score);
+  const topScore = related[0].score;
   const pool = related
     .filter(item => item.score >= Math.max(1, topScore - 80))
     .slice(0, 8);
   const selected = pool[Math.floor(Math.random() * pool.length)] || related[0];
+
+  console.log(
+    "🎯 Autoplay selected: " + titleOf(selected.track) +
+    " [" + selected.relation + "] from context: " +
+    title + " — " + artist
+  );
   return selected.track;
 }
 
