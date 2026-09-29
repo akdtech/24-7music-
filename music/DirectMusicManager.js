@@ -534,7 +534,10 @@ class DirectMusicManager {
       );
     });
 
-      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+      // Discord voice handshakes can occasionally exceed 20s during a
+      // reconnect/deployment. Keep the same connection alive long enough
+      // for the gateway handshake to finish instead of declaring /join failed.
+      await entersState(connection, VoiceConnectionStatus.Ready, 30000);
       return connection;
     })();
 
