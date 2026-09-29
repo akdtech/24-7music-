@@ -485,19 +485,32 @@ class DirectMusicManager {
     if (existing && existing.state.status !== VoiceConnectionStatus.Destroyed) {
       const existingVoiceId = existing.joinConfig?.channelId || null;
 
-      // Keep the current connection when /play targets the same channel.
-      // If /play was issued from another voice channel, replace the existing
-      // guild connection so the bot follows the user instead of being pinned
-      // to the configured 24/7 channel.
+      // Reuse the current connection when /play targets the same channel.
+      // A transient Discord voice disconnect should be rejoined in-place
+      // instead of waiting 10 seconds and racing the recovery loop.
       if (existingVoiceId === voiceId) {
-        try {
-          await entersState(existing, VoiceConnectionStatus.Ready, 10000);
-          return existing;
-        } catch {}
+        if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
+
+        if (existing.state.status === VoiceConnectionStatus.Disconnected) {
+          try {
+            existing.rejoin({ channelId: voiceId });
+            await entersState(existing, VoiceConnectionStatus.Ready, 5000);
+            return existing;
+          } catch {}
+        } else {
+          try {
+            await entersState(existing, VoiceConnectionStatus.Ready, 10000);
+            return existing;
+          } catch {}
+        }
       }
 
-      try { existing.destroy(); } catch {}
-      this.connections.delete(guildId);
+      // Only destroy the object if it is still the active connection. The
+      // recovery loop may have replaced it while we were waiting above.
+      if (this.connections.get(guildId) === existing) {
+        try { existing.destroy(); } catch {}
+        this.connections.delete(guildId);
+      }
     }
 
     const connection = joinVoiceChannel({
