@@ -602,7 +602,27 @@ class DirectMusicManager {
     console.log(`♾️ 24/7 direct voice connected: ${guildId}`);
 
     if (!state.current && !state.queue.length && state.autoplay && player.state.status !== AudioPlayerStatus.Playing) {
-      await this.autoplayNext(guildId).catch(error => console.warn("⚠️ Autoplay startup:", error?.message || error));
+      // Startup must not leave the permanent radio silent because one YouTube
+      // extraction or voice handoff attempt failed. Retry a few times and
+      // re-ensure the voice connection between attempts.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (state.current || state.queue.length || !state.autoplay) break;
+        const started = await this.autoplayNext(guildId).catch(error => {
+          console.warn("⚠️ Autoplay startup attempt " + attempt + " failed:", error?.message || error);
+          return false;
+        });
+        if (started) break;
+
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 2500));
+          try {
+            await this.ensureConnection(guildId, state.activeVoiceChannelId || voiceId);
+            this.ensurePlayer(guildId);
+          } catch (error) {
+            console.warn("⚠️ 24/7 voice recheck failed:", error?.message || error);
+          }
+        }
+      }
     }
     return player;
   }
