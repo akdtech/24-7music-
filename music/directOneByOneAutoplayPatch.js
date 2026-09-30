@@ -153,199 +153,138 @@ async function findNext(manager, state) {
   const artist = clean(ctx.artist || ctx.author);
   const title = clean(ctx.title);
   const genre = clean(ctx.genre);
-  const query = clean(ctx.query);
-  const hasContext = Boolean(artist || title || genre || query);
+  const languageMap = new Map([
+    ["sidhu moose wala","pa"],["sidhu moosewala","pa"],["karan aujla","pa"],["ap dhillon","pa"],
+    ["shubh","pa"],["diljit dosanjh","pa"],["amrit maan","pa"],["prem dhillon","pa"],
+    ["gurinder gill","pa"],["navaan sandhu","pa"],["arjan dhillon","pa"],["wazir patar","pa"],
+    ["sunny malton","pa"],["sukha","pa"],["jordan sandhu","pa"],["parmish verma","pa"],
+    ["jazzy b","pa"],["garry sandhu","pa"],["ammy virk","pa"],["raf saperra","pa"],
+    ["sikander kahlon","pa"],["talwiinder","pa"],["arijit singh","hi"],["badshah","hi"],
+    ["king","hi"],["jubin nautiyal","hi"],["shreya ghoshal","hi"],["atif aslam","ur"]
+  ]);
+  const genreMap = new Map([
+    ["sidhu moose wala","hiphop"],["sidhu moosewala","hiphop"],["karan aujla","hiphop"],
+    ["ap dhillon","hiphop"],["shubh","hiphop"],["diljit dosanjh","desi"],["prem dhillon","hiphop"],
+    ["arjan dhillon","hiphop"],["wazir patar","hiphop"],["sunny malton","hiphop"],["sukha","hiphop"]
+  ]);
+  const languageOf = track => {
+    const explicit = track?.language || track?.defaultAudioLanguage || track?.default_audio_language ||
+      track?.defaultLanguage || track?.default_language;
+    if (explicit) return String(explicit).toLowerCase().split(/[-_]/)[0];
+    const text = clean([track?.title,track?.author,track?.uploader,track?.genre,track?.category].filter(Boolean).join(" ")).toLowerCase();
+    if (/[\u0a00-\u0a7f]/.test(text)) return "pa";
+    if (/[\u0900-\u097f]/.test(text)) return "hi";
+    if (/\b(punjabi|panjabi)\b/.test(text)) return "pa";
+    if (/\b(hindi|bollywood)\b/.test(text)) return "hi";
+    if (/\burdu\b/.test(text)) return "ur";
+    if (/\barabic\b/.test(text)) return "ar";
+    const a = norm(artistOf(track));
+    for (const [name,code] of languageMap) if (a === name || a.includes(name) || name.includes(a)) return code;
+    return "unknown";
+  };
+  const artistGenre = track => {
+    const a = norm(artistOf(track));
+    for (const [name,code] of genreMap) if (a === name || a.includes(name) || name.includes(a)) return code;
+    return "";
+  };
+  const genreFamily = value => {
+    const g = norm(value);
+    if (/\b(gangsta|hardcore|trap|drill|hip hop|rap|grime)\b/.test(g)) return "hiphop";
+    if (/\b(bhangra|punjabi|desi|indian pop|bollywood)\b/.test(g)) return "desi";
+    if (/\b(pop|dance pop|synth pop|electropop)\b/.test(g)) return "pop";
+    if (/\b(r&b|rnb|soul)\b/.test(g)) return "rnb";
+    if (/\b(rock|alternative|indie rock|metal)\b/.test(g)) return "rock";
+    if (/\b(edm|house|techno|trance|dubstep|electronic)\b/.test(g)) return "electronic";
+    return g;
+  };
 
-  console.log(
-    "🧭 Autoplay context: " + (title || "Unknown") +
-    " — " + (artist || "Unknown artist") +
-    (genre ? " [" + genre + "]" : "")
-  );
+  const language = languageOf(ctx);
+  const targetGenre = genreFamily(genre) || artistGenre(ctx);
+  const langName = {pa:"Punjabi",hi:"Hindi",ur:"Urdu",ar:"Arabic",bn:"Bengali",ta:"Tamil",te:"Telugu",ml:"Malayalam",ja:"Japanese",ko:"Korean",es:"Spanish",fr:"French",de:"German",pt:"Portuguese",en:"English"}[language] || "";
+  const genreName = {hiphop:"hip hop",desi:"desi Punjabi",pop:"pop",rnb:"R&B",rock:"rock",electronic:"electronic"}[targetGenre] || "";
+
+  console.log("🧭 Autoplay context: " + (title || "Unknown") + " — " + (artist || "Unknown artist") +
+    " | language=" + language + " | genre=" + (targetGenre || "unknown"));
 
   const seeds = [];
-
-  if (artist) {
-    // Keep same-artist discovery available, but never make it the only
-    // definition of "related".
-    seeds.push(artist + " songs official audio");
-    seeds.push(artist + " official songs");
-  }
-
-  if (genre) {
-    seeds.push(genre + " songs official audio");
-    seeds.push(genre + " popular songs official audio");
-  }
-
   if (title && artist) {
-    // These searches intentionally target similar music from OTHER artists.
-    // YouTube often has no reliable genre field, so "songs like" is used as
-    // the genre/style signal instead of forcing same-artist playback.
-    seeds.push("songs like " + title + " by " + artist + " similar artists");
-    seeds.push(artist + " " + title + " similar songs different artists");
-    seeds.push(artist + " similar artists songs");
+    seeds.push("songs like " + title + " by " + artist + " " + langName + " " + genreName + " similar artists official audio");
+    seeds.push(artist + " similar artists " + langName + " " + genreName + " official audio");
   }
-
-  if (query && !artist) {
-    seeds.push(query + " related songs official audio");
-  }
-
+  if (langName && genreName) seeds.push(langName + " " + genreName + " similar songs official audio");
+  if (langName) seeds.push(langName + " songs similar to " + (title || artist) + " official audio");
   if (!seeds.length) seeds.push("popular songs official audio");
 
-  const recentIds = new Set(Array.isArray(state.recent) ? state.recent.map(String) : []);
-  const recentSongs = new Set(Array.isArray(state.recentSongs) ? state.recentSongs.map(String) : []);
-  const recentTitles = new Set(Array.isArray(state.recentTitles) ? state.recentTitles.map(String) : []);
-
+  const recentIds = new Set((state.recent || []).map(String));
+  const recentSongs = new Set((state.recentSongs || []).map(String));
+  const recentTitles = new Set((state.recentTitles || []).map(String));
   if (ctx.id) recentIds.add(String(ctx.id));
-  if (ctx.title || ctx.author) {
-    recentSongs.add(songIdentity({ title: ctx.title, author: ctx.artist || ctx.author }));
-    recentTitles.add(canonicalTitle(ctx.title));
-  }
-
-  if (state.current) {
-    recentIds.add(idOf(state.current));
-    recentSongs.add(songIdentity(state.current));
-    recentTitles.add(titleIdentity(state.current));
-  }
+  if (ctx.title) recentTitles.add(canonicalTitle(ctx.title));
 
   const candidates = [];
-  const seenIds = new Set();
-  const seenSongs = new Set();
+  const seen = new Set();
 
-  for (const seed of [...new Set(seeds)].slice(0, 6)) {
+  for (const seed of [...new Set(seeds)].slice(0,5)) {
     try {
-      console.log("🔎 Strict related YouTube search: " + seed);
+      console.log("🔎 Context autoplay search: " + seed);
       const entries = await search(seed);
-
       for (const entry of entries) {
         const track = toTrack(entry, manager.client.user);
         if (!track) continue;
-
         const id = idOf(track);
-        const song = songIdentity(track);
-        const canonical = titleIdentity(track);
+        const canonical = canonicalTitle(titleOf(track));
+        const identity = songIdentity(track);
+        if (!id || !canonical || seen.has(id)) continue;
+        seen.add(id);
 
-        if (!id || !song || !canonical) continue;
-        if (seenIds.has(id) || seenSongs.has(song)) continue;
-
-        seenIds.add(id);
-        seenSongs.add(song);
-
-        if (isAlternateVersion(track)) {
-          console.log("⛔ Rejected alternate/unofficial-looking track: " + titleOf(track) + " — " + artistOf(track));
-          continue;
-        }
-
+        if (/\b(lyrics?|english version|hindi version|punjabi version|urdu version|arabic version|translation|translated|romanized|romanised|remix|cover|live|acoustic|instrumental|karaoke|nightcore|slowed|sped up|mashup|bootleg|fanmade|fan made|radio edit|club edit)\b/i.test(titleOf(track))) continue;
+        if (isAlternateVersion(track)) continue;
         if (track.length < MIN_TRACK_MS || track.length > MAX_TRACK_MS) continue;
+        if (ctx.title && canonical === canonicalTitle(ctx.title)) continue;
+        if (recentIds.has(id) || recentSongs.has(identity) || recentTitles.has(canonical)) continue;
 
-        // Different YouTube ID is NOT enough. Reject the same canonical song
-        // even when it comes from another upload or another artist.
-        if (recentIds.has(id) || recentSongs.has(song) || recentTitles.has(canonical)) {
-          console.log("⛔ Rejected duplicate song identity: " + titleOf(track) + " — " + artistOf(track));
-          continue;
-        }
+        const candidateLanguage = languageOf(track);
+        if (language !== "unknown" && candidateLanguage !== language) continue;
 
-        // Never pick another version of the current song.
-        if (title && canonical === canonicalTitle(title)) {
-          console.log("⛔ Rejected same canonical title: " + titleOf(track));
-          continue;
-        }
+        const candidateGenre = genreFamily(track.genre || track.category) || artistGenre(track) || genreFamily(seed);
+        const sameGenre = !!targetGenre && candidateGenre === targetGenre;
+        if (targetGenre && !sameGenre) continue;
 
-        const trackArtist = artistOf(track);
-        const trackGenre = norm(track.genre);
-        const artistMatch = !!(artist && sameArtist(trackArtist, artist));
-        const genreMatch = !!(genre && trackGenre && trackGenre === norm(genre));
+        const artistMatch = sameArtist(artistOf(track), artist);
+        const similarSignal = /similar artists|similar songs|songs like|similar to/.test(norm(seed));
+        if (!similarSignal) continue;
 
-        // YouTube search often does not expose genre metadata. A candidate
-        // returned from a dedicated genre query is therefore allowed as a
-        // Same Genre candidate, provided it is not an artist-specific query.
-        const genreSeed = !!genre && norm(seed).startsWith(norm(genre));
-        const artistSeed = !!artist && norm(seed).includes(norm(artist));
-        const similarArtistSeed = /similar artists|similar songs|songs like/.test(norm(seed));
-
-        let relation = "Unrelated";
         let score = officialSignal(track);
-
-        if (artistMatch) {
-          relation = "Same Artist";
-          score += 1000;
-          // Similar-artist searches are specifically intended to leave the
-          // current artist, so same-artist hits from those searches get no
-          // genre/similar-artist boost.
-          if (similarArtistSeed) score -= 650;
-        } else if (genreMatch || (genreSeed && !artistSeed) || similarArtistSeed) {
-          relation = "Same Genre";
-          score += similarArtistSeed ? 850 : 700;
-        }
-
+        if (sameGenre) score += 1000;
+        if (language !== "unknown" && candidateLanguage === language) score += 1000;
+        if (!artistMatch) score += 400;
+        if (artistMatch) score += 50;
         if (track.length >= 90 * 1000 && track.length <= 6 * 60 * 1000) score += 25;
-        if (artistMatch && canonical !== canonicalTitle(title)) score += 100;
 
-        // Once a song exists, unrelated music is never an autoplay fallback.
-        if (hasContext && relation === "Unrelated") continue;
-
-        candidates.push({ track, score, relation });
+        candidates.push({track,score,artistMatch,sameGenre,candidateLanguage});
       }
-    } catch (error) {
-      console.warn("⚠️ Strict related autoplay search failed:", error?.message || error);
+    } catch(error) {
+      console.warn("⚠️ Context autoplay search failed:", error?.message || error);
     }
   }
 
-  if (!candidates.length) return null;
-
-  const sameArtistCandidates = candidates
-    .filter(x => x.relation === "Same Artist")
-    .sort((a, b) => b.score - a.score);
-
-  const sameGenreCandidates = candidates
-    .filter(x => x.relation === "Same Genre")
-    .sort((a, b) => b.score - a.score);
-
-  // Do not let a large same-artist result set starve the genre rotation.
-  // When both relations exist, deliberately choose between them. This keeps
-  // the radio related to the current track without becoming an artist-only
-  // station.
-  let related = [];
-  if (sameGenreCandidates.length) {
-    // Prefer genre/similar-artist rotation whenever it is available. This
-    // prevents /skip from becoming an "artist-only" radio station.
-    related = sameGenreCandidates;
-    console.log("🧭 Autoplay relation choice: Same Genre / Similar Artist");
-  } else {
-    related = sameArtistCandidates;
-    if (related.length) console.log("🧭 Autoplay relation choice: Same Artist (no different-artist related result found)");
-  }
-
-  // After a process restart/reconnect there may be no previous track context.
-  // Allow one clean seed song to bootstrap the radio; once it starts, all
-  // subsequent autoplay remains strict same-artist/same-genre.
-  if (!related.length && !hasContext) {
-    const startup = candidates
-      .filter(x => x.relation === "Unrelated")
-      .sort((a, b) => b.score - a.score);
-    if (startup.length) {
-      console.log("🎯 Autoplay startup seed selected: " + titleOf(startup[0].track));
-      return startup[0].track;
-    }
-  }
-
-  if (!related.length) {
-    console.warn("⚠️ No valid same-artist/same-genre track found; refusing unrelated autoplay.");
+  if (!candidates.length) {
+    console.warn("⚠️ No clean same-language + same-genre candidate found; refusing unrelated autoplay.");
     return null;
   }
 
-  const topScore = related[0].score;
-  const pool = related
-    .filter(x => x.score >= Math.max(1, topScore - 90))
-    .slice(0, 8);
+  const differentArtist = candidates.filter(x => !x.artistMatch);
+  const related = (differentArtist.length ? differentArtist : candidates).sort((a,b)=>b.score-a.score);
+  const top = related[0].score;
+  const pool = related.filter(x => x.score >= top - 120).slice(0,8);
+  const chosen = pool[Math.floor(Math.random() * pool.length)] || related[0];
 
-  const selected = pool[Math.floor(Math.random() * pool.length)] || related[0];
+  console.log("🎯 Context autoplay selected: " + titleOf(chosen.track) + " [" +
+    (chosen.sameGenre ? "same genre" : "related") + " • " +
+    (chosen.candidateLanguage !== "unknown" ? "same language" : "unknown") + " • " +
+    (chosen.artistMatch ? "same artist" : "different artist") + "]");
 
-  console.log(
-    "🎯 Strict autoplay selected: " + titleOf(selected.track) +
-    " [" + selected.relation + "] — " + artistOf(selected.track)
-  );
-
-  return selected.track;
+  return chosen.track;
 }
 
 if (!MusicManager.prototype.__deathOneByOneAutoplay) {
@@ -382,6 +321,7 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
         author: artistOf(next),
         artist: artistOf(next),
         genre: next.genre || state.autoplayContext?.genre || null,
+        language: next.language || state.autoplayContext?.language || null,
         query: titleOf(next) + " " + artistOf(next),
         id
       };
