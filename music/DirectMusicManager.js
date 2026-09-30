@@ -680,6 +680,12 @@ class DirectMusicManager {
       const state = this.getState(guildId);
       if (state.intentionalLeave) return;
 
+      // Preserve the live track across transient Discord voice disconnects.
+      // Capture position before replacing the voice connection so recovery
+      // resumes the same song instead of leaving the player silently idle.
+      const recoveryTrack = state.current ? { ...state.current } : null;
+      const recoveryPosition = recoveryTrack ? this.getPosition(guildId) : 0;
+
       // Give Discord voice a brief chance to recover the existing connection
       // before destroying it. This avoids racing /play against a transient
       // Disconnected state.
@@ -688,7 +694,20 @@ class DirectMusicManager {
         try {
           current.rejoin({ channelId: voiceId });
           await entersState(current, VoiceConnectionStatus.Ready, 5000);
-          this.ensurePlayer(guildId);
+          const player = this.ensurePlayer(guildId);
+          this.bindPlayerEvents(guildId, player);
+
+          if (recoveryTrack && state.autoplay && !state.intentionalLeave) {
+            state.transitioning = true;
+            try {
+              await this.startTrack(guildId, recoveryTrack, recoveryPosition, { handoff: true });
+              state.transitioning = false;
+              console.log("🔄 Voice recovery resumed: " + this.getTrackTitle(recoveryTrack));
+            } catch (error) {
+              state.transitioning = false;
+              console.warn("⚠️ Voice recovery resume failed:", error?.message || error);
+            }
+          }
           return;
         } catch {}
       }
@@ -702,7 +721,17 @@ class DirectMusicManager {
       const player = this.ensurePlayer(guildId);
       this.bindPlayerEvents(guildId, player);
 
-      if (!state.current && !state.queue.length && state.autoplay) {
+      if (recoveryTrack && state.autoplay && !state.intentionalLeave) {
+        state.transitioning = true;
+        try {
+          await this.startTrack(guildId, recoveryTrack, recoveryPosition, { handoff: true });
+          state.transitioning = false;
+          console.log("🔄 Voice recovery resumed: " + this.getTrackTitle(recoveryTrack));
+        } catch (error) {
+          state.transitioning = false;
+          console.warn("⚠️ Voice recovery resume failed:", error?.message || error);
+        }
+      } else if (!state.current && !state.queue.length && state.autoplay) {
         await this.autoplayNext(guildId).catch(() => {});
       }
     })();
