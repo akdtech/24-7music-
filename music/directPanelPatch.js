@@ -193,34 +193,15 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
   MusicManager.prototype.movePanelToBottom = async function canonicalMovePanelToBottom(guildId) {
     const state = this.getState(guildId);
     try {
-      const channel = await this.findPanelChannel(guildId);
-      if (!channel) throw new Error("Music panel channel is not available.");
-
-      let oldPanel = null;
-      if (state.panelMessageId && state.panelChannelId === channel.id) {
-        try { oldPanel = await channel.messages.fetch(state.panelMessageId); } catch {}
-      }
-
-      // Discord cannot reposition a message. Recreate it only after the quiet
-      // period, but ALWAYS recreate through the rich ensurePanel() renderer.
-      // Never call the legacy buildPanelPayload() here: that renderer contains
-      // the old Volume/Loop/Shuffle/Stop/Refresh controls.
-      if (oldPanel) {
-        await oldPanel.delete();
-      }
-
-      state.panelMessageId = null;
-      state.panelChannelId = null;
-
-      const newPanel = await this.ensurePanel(guildId);
-      if (newPanel && !newPanel.pinned) {
-        await newPanel.pin("GMAO Music 24/7 panel moved to channel bottom").catch(() => {});
-      }
-
-      console.log("📌 GMAO music panel moved to channel bottom with the current GMAO UI.");
-      return Boolean(newPanel);
+      // IMPORTANT: do not delete/re-send the panel. A new Discord message
+      // generates a desktop notification. Discord cannot physically reorder an
+      // existing message, so the panel stays as ONE persistent message and is
+      // simply refreshed/edited after the quiet period.
+      const message = await this.ensurePanel(guildId);
+      console.log("📌 GMAO music panel refreshed in place after quiet period; no new notification.");
+      return Boolean(message);
     } catch (error) {
-      console.warn("⚠️ Delayed music panel move failed:", error?.message || error);
+      console.warn("⚠️ Delayed music panel refresh failed:", error?.message || error);
       return false;
     }
   };
