@@ -83,8 +83,7 @@ function search(query) {
     const child = spawn(YTDLP, [
       "--quiet", "--no-warnings", "--no-progress", "--no-playlist",
       "--flat-playlist", "--skip-download", "--playlist-end", "8",
-      "--js-runtimes", "node",
-      "--print", "%(id)s\t%(title)s\t%(channel)s\t%(duration)s",
+      "--js-runtimes", "node", "--dump-single-json",
       "ytsearch8:" + clean(query)
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -116,20 +115,12 @@ function search(query) {
         return reject(new Error(clean(err).slice(-1200) || "YouTube autoplay search failed"));
       }
 
-      const entries = out.split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean)
-        .map(line => {
-          const parts = line.split("\t");
-          const id = clean(parts.shift());
-          const duration = Number(parts.pop() || 0);
-          const channel = clean(parts.pop() || "");
-          const title = clean(parts.join("\t"));
-          return id && title ? { id, title, channel, duration } : null;
-        })
-        .filter(Boolean);
-
-      resolve(entries);
+      try {
+        const parsed = JSON.parse(out || "{}");
+        resolve(Array.isArray(parsed.entries) ? parsed.entries : []);
+      } catch (error) {
+        reject(new Error("YouTube autoplay search returned invalid metadata: " + clean(error?.message || error)));
+      }
     });
   });
 }
