@@ -323,12 +323,18 @@ async function findNext(manager, state) {
 if (!MusicManager.prototype.__deathOneByOneAutoplay) {
   MusicManager.prototype.__deathOneByOneAutoplay = true;
 
-  MusicManager.prototype.autoplayNext = async function oneByOneAutoplay(guildId) {
+  if (!MusicManager.prototype.__gmaoOriginalSkip) {
+    MusicManager.prototype.__gmaoOriginalSkip = MusicManager.prototype.skip;
+  }
+
+  MusicManager.prototype.autoplayNext = async function oneByOneAutoplay(guildId, options = {}) {
     const state = this.getState(guildId);
-    this.players.get(guildId) || this.ensurePlayer(guildId);
+    const player = this.players.get(guildId) || this.ensurePlayer(guildId);
+    const preserveCurrent = Boolean(options?.preserveCurrent || options?.forceRelated);
+    const previousTrack = state.current || player?.state?.resource?.metadata || null;
 
     if (!state.autoplay || state.intentionalLeave || state.autoplayBusy) return false;
-    if (state.current || state.queue.length) return false;
+    if ((state.current || state.queue.length) && !preserveCurrent) return false;
 
     state.autoplayBusy = true;
 
@@ -361,7 +367,26 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
         id
       };
 
-      await this.startTrack(guildId, next, 0, { handoff: true });
+      if (preserveCurrent && previousTrack) {
+        this.destroyStream(guildId);
+        try { player?.stop(true); } catch {}
+        state.current = null;
+        state.audioResource = null;
+        state.startedAt = 0;
+        state.positionOffset = 0;
+      }
+
+      try {
+        await this.startTrack(guildId, next, 0, { handoff: true });
+      } catch (error) {
+        if (preserveCurrent && previousTrack && !state.current) {
+          try {
+            await this.startTrack(guildId, previousTrack, 0, { handoff: true });
+            console.warn("⚠️ Skip replacement failed; restored previous track.");
+          } catch {}
+        }
+        throw error;
+      }
 
       state.queue = [];
       state.transitioning = false;
@@ -377,6 +402,38 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
       state.autoplayBusy = false;
     }
   };
+
+  MusicManager.prototype.skip = async function strictSkip(guildId) {
+    const state = this.getState(guildId);
+    const player = this.players.get(guildId);
+    const current = state.current || player?.state?.resource?.metadata || null;
+
+    if (!current || !state.autoplay || state.queue.length) {
+      if (typeof MusicManager.prototype.__gmaoOriginalSkip === "function") {
+        return MusicManager.prototype.__gmaoOriginalSkip.call(this, guildId);
+      }
+      return false;
+    }
+
+    if (state.autoplayBusy) return false;
+
+    const oldTrack = state.current || current;
+    try {
+      const ok = await this.autoplayNext(guildId, { forceRelated: true, preserveCurrent: true });
+      if (!ok && oldTrack && !state.current) {
+        try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
+      }
+      return ok;
+    } catch (error) {
+      if (!state.current && oldTrack) {
+        try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
+      }
+      console.warn("⚠️ Strict Skip failed:", error?.message || error);
+      return false;
+    }
+  };
+
+  MusicManager.prototype.__gmaoStrictSkip = MusicManager.prototype.skip;
 
   console.log("♾️ DEATH strict autoplay loaded: canonical dedupe + alternate-version rejection + artist/genre-only rotation.");
 }
