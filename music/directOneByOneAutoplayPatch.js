@@ -290,7 +290,18 @@ async function findNext(manager, state) {
     .filter(x => x.relation === "Same Genre")
     .sort((a, b) => b.score - a.score);
 
-  const related = sameArtistCandidates.length ? sameArtistCandidates : sameGenreCandidates;
+  // Do not let a large same-artist result set starve the genre rotation.
+  // When both relations exist, deliberately choose between them. This keeps
+  // the radio related to the current track without becoming an artist-only
+  // station.
+  let related = [];
+  if (sameArtistCandidates.length && sameGenreCandidates.length) {
+    const useGenre = Math.random() < 0.5;
+    related = useGenre ? sameGenreCandidates : sameArtistCandidates;
+    console.log("🧭 Autoplay relation choice: " + (useGenre ? "Same Genre" : "Same Artist"));
+  } else {
+    related = sameArtistCandidates.length ? sameArtistCandidates : sameGenreCandidates;
+  }
 
   // After a process restart/reconnect there may be no previous track context.
   // Allow one clean seed song to bootstrap the radio; once it starts, all
