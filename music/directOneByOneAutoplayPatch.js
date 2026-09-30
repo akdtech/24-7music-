@@ -255,14 +255,16 @@ async function findNext(manager, state) {
   const searchResults = await Promise.all(seedList.map(async seed => {
     try {
       console.log("🔎 Context autoplay search: " + seed);
-      return await search(seed);
+      return { seed, entries: await search(seed) };
     } catch (error) {
       console.warn("⚠️ Context autoplay search failed: " + (error?.message || error));
-      return [];
+      return { seed, entries: [] };
     }
   }));
 
-  for (const entries of searchResults) {
+  for (const result of searchResults) {
+    const entries = result.entries;
+    const seed = result.seed;
     for (const entry of entries) {
       const track = toTrack(entry, manager.client.user);
       if (!track) continue;
