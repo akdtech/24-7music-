@@ -84,7 +84,7 @@ function search(query) {
       "--quiet", "--no-warnings", "--no-progress", "--no-playlist",
       "--flat-playlist", "--skip-download", "--playlist-end", "8",
       "--js-runtimes", "node",
-      "--print", "%(id)s\\t%(title)s\\t%(channel)s\\t%(duration)s",
+      "--print", "%(id)s\t%(title)s\t%(channel)s\t%(duration)s",
       "ytsearch8:" + clean(query)
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -116,15 +116,15 @@ function search(query) {
         return reject(new Error(clean(err).slice(-1200) || "YouTube autoplay search failed"));
       }
 
-      const entries = out.split(/\\r?\\n/)
+      const entries = out.split(/\r?\n/)
         .map(line => line.trim())
         .filter(Boolean)
         .map(line => {
-          const parts = line.split("\\t");
+          const parts = line.split("\t");
           const id = clean(parts.shift());
           const duration = Number(parts.pop() || 0);
           const channel = clean(parts.pop() || "");
-          const title = clean(parts.join("\\t"));
+          const title = clean(parts.join("\t"));
           return id && title ? { id, title, channel, duration } : null;
         })
         .filter(Boolean);
