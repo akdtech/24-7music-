@@ -12,6 +12,9 @@ module.exports = {
     ),
 
   async execute(interaction, { music }) {
+    await interaction.deferReply({ ephemeral: true });
+    await interaction.editReply("⏳ **Updating autoplay…**");
+
     const state = music.getState(interaction.guildId);
     state.autoplay = interaction.options.getBoolean("enabled", true);
     state.autoplayGeneration = (state.autoplayGeneration || 0) + 1;
@@ -22,7 +25,7 @@ module.exports = {
 
     await music.refreshPanel(interaction.guildId).catch(() => {});
 
-    return interaction.reply(
+    return interaction.editReply(
       `♾️ Autoplay is now **${state.autoplay ? "ON" : "OFF"}**.`
     );
   }
