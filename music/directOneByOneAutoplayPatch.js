@@ -81,12 +81,9 @@ function officialSignal(track) {
 function search(query) {
   return new Promise((resolve, reject) => {
     const child = spawn(YTDLP, [
-      "--no-warnings", "--no-progress", "--no-playlist", "--no-flat-playlist",
-      "--skip-download", "--playlist-end", "10", "--js-runtimes", "node",
-      "--extractor-args", "youtube:player_client=web_music,web_embedded",
-      "--remote-components", "ejs:github",
-      "--dump-single-json",
-      "ytsearch12:" + clean(query)
+      "--no-warnings", "--no-progress", "--no-playlist", "--flat-playlist",
+      "--skip-download", "--playlist-end", "8", "--js-runtimes", "node",
+      "ytsearch8:" + clean(query)
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
     let out = "", err = "", done = false;
@@ -96,16 +93,16 @@ function search(query) {
         done = true;
         reject(new Error("autoplay search timeout"));
       }
-    }, 20000);
+    }, 8000);
 
-    child.stdout.on("data", c => out += c.toString());
-    child.stderr.on("data", c => err += c.toString());
+    child.stdout.on("data", chunk => out += chunk.toString());
+    child.stderr.on("data", chunk => err += chunk.toString());
 
-    child.on("error", e => {
+    child.on("error", error => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      reject(e);
+      reject(error);
     });
 
     child.on("close", code => {
@@ -118,13 +115,12 @@ function search(query) {
       try {
         const parsed = JSON.parse(out || "{}");
         resolve(Array.isArray(parsed.entries) ? parsed.entries : []);
-      } catch (e) {
-        reject(e);
+      } catch (error) {
+        reject(error);
       }
     });
   });
 }
-
 function toTrack(entry, requester) {
   if (!entry?.id || !entry?.title) return null;
   return {
@@ -239,48 +235,57 @@ async function findNext(manager, state) {
   const candidates = [];
   const seen = new Set();
 
-  for (const seed of [...new Set(seeds)].slice(0,5)) {
+  // Search a small number of related seeds in parallel. The old sequential
+  // 20-second searches could make Skip leave the voice channel silent for
+  // 30-60+ seconds. Flat YouTube search is enough here because language and
+  // genre are inferred from the artist/title maps below.
+  const seedList = [...new Set(seeds)].slice(0, 3);
+  const searchResults = await Promise.all(seedList.map(async seed => {
     try {
       console.log("🔎 Context autoplay search: " + seed);
-      const entries = await search(seed);
-      for (const entry of entries) {
-        const track = toTrack(entry, manager.client.user);
-        if (!track) continue;
-        const id = idOf(track);
-        const canonical = canonicalTitle(titleOf(track));
-        const identity = songIdentity(track);
-        if (!id || !canonical || seen.has(id)) continue;
-        seen.add(id);
+      return await search(seed);
+    } catch (error) {
+      console.warn("⚠️ Context autoplay search failed: " + (error?.message || error));
+      return [];
+    }
+  }));
 
-        if (/\b(lyrics?|english version|hindi version|punjabi version|urdu version|arabic version|translation|translated|romanized|romanised|remix|cover|live|acoustic|instrumental|karaoke|nightcore|slowed|sped up|mashup|bootleg|fanmade|fan made|radio edit|club edit)\b/i.test(titleOf(track))) continue;
-        if (isAlternateVersion(track)) continue;
-        if (track.length < MIN_TRACK_MS || track.length > MAX_TRACK_MS) continue;
-        if (ctx.title && canonical === canonicalTitle(ctx.title)) continue;
-        if (recentIds.has(id) || recentSongs.has(identity) || recentTitles.has(canonical)) continue;
+  for (const entries of searchResults) {
+    for (const entry of entries) {
+      const track = toTrack(entry, manager.client.user);
+      if (!track) continue;
+      const id = idOf(track);
+      const canonical = canonicalTitle(titleOf(track));
+      const identity = songIdentity(track);
+      if (!id || !canonical || seen.has(id)) continue;
+      seen.add(id);
 
-        const candidateLanguage = languageOf(track);
-        if (language !== "unknown" && candidateLanguage !== language) continue;
-        if (language !== "unknown" && candidateLanguage === "en" && language !== "en") continue;
+      if (/\b(lyrics?|english version|hindi version|punjabi version|urdu version|arabic version|translation|translated|romanized|romanised|remix|cover|live|acoustic|instrumental|karaoke|nightcore|slowed|sped up|mashup|bootleg|fanmade|fan made|radio edit|club edit)\b/i.test(titleOf(track))) continue;
+      if (isAlternateVersion(track)) continue;
+      if (track.length < MIN_TRACK_MS || track.length > MAX_TRACK_MS) continue;
+      if (ctx.title && canonical === canonicalTitle(ctx.title)) continue;
+      if (recentIds.has(id) || recentSongs.has(identity) || recentTitles.has(canonical)) continue;
 
-        const candidateGenre = genreFamily(track.genre || track.category) || artistGenre(track) || genreFamily(seed);
-        const sameGenre = !!targetGenre && candidateGenre === targetGenre;
-        if (targetGenre && !sameGenre) continue;
+      const candidateLanguage = languageOf(track);
+      if (language !== "unknown" && candidateLanguage !== language) continue;
+      if (language !== "unknown" && candidateLanguage === "en" && language !== "en") continue;
 
-        const artistMatch = sameArtist(artistOf(track), artist);
-        const similarSignal = /similar artists|similar songs|songs like|similar to/.test(norm(seed));
-        if (!similarSignal) continue;
+      const candidateGenre = genreFamily(track.genre || track.category) || artistGenre(track) || genreFamily(seed);
+      const sameGenre = !!targetGenre && candidateGenre === targetGenre;
+      if (targetGenre && !sameGenre) continue;
 
-        let score = officialSignal(track);
-        if (sameGenre) score += 1000;
-        if (language !== "unknown" && candidateLanguage === language) score += 1000;
-        if (!artistMatch) score += 400;
-        if (artistMatch) score += 50;
-        if (track.length >= 90 * 1000 && track.length <= 6 * 60 * 1000) score += 25;
+      const artistMatch = sameArtist(artistOf(track), artist);
+      const similarSignal = /similar artists|similar songs|songs like|similar to/.test(norm(seed));
+      if (!similarSignal) continue;
 
-        candidates.push({track,score,artistMatch,sameGenre,candidateLanguage});
-      }
-    } catch(error) {
-      console.warn("⚠️ Context autoplay search failed:", error?.message || error);
+      let score = officialSignal(track);
+      if (sameGenre) score += 1000;
+      if (language !== "unknown" && candidateLanguage === language) score += 1000;
+      if (!artistMatch) score += 400;
+      if (artistMatch) score += 50;
+      if (track.length >= 90 * 1000 && track.length <= 6 * 60 * 1000) score += 25;
+
+      candidates.push({track,score,artistMatch,sameGenre,candidateLanguage});
     }
   }
 
