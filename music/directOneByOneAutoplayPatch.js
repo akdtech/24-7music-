@@ -169,6 +169,14 @@ async function findNext(manager, state) {
     ["divine","hi"],["emiway bantai","hi"],["yo yo honey singh","hi"],["armaan malik","hi"],
     ["pritam","hi"],["sonu nigam","hi"],["atif aslam","ur"],["ali zafar","ur"]
   ]);
+  const knownArtists = [...languageMap.keys()].sort((a,b)=>b.length-a.length);
+  const artistFromText = value => {
+    const text = norm(value);
+    for (const name of knownArtists) {
+      if (text.includes(name)) return name;
+    }
+    return "";
+  };
   const genreMap = new Map([
     ["sidhu moose wala","hiphop"],["sidhu moosewala","hiphop"],["karan aujla","hiphop"],
     ["ap dhillon","hiphop"],["shubh","hiphop"],["diljit dosanjh","desi"],["prem dhillon","hiphop"],
