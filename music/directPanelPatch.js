@@ -187,29 +187,19 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
   // The legacy DirectMusicManager has its own movePanelToBottom() which builds the old
   // Volume/Loop/Shuffle/Stop/Refresh UI. Override it here so sticky-panel recreation
   // can NEVER resurrect those controls.
+  // Discord does not support moving an existing message to the bottom of a
+  // channel. Deleting + re-sending creates the "panel spam" the user sees.
+  // Keep ONE persistent message and edit it in place instead.
   MusicManager.prototype.movePanelToBottom = async function canonicalMovePanelToBottom(guildId) {
     const state = this.getState(guildId);
-    const channel = await this.findPanelChannel(guildId);
-    const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-
-    if (messages) {
-      const panels = [...messages.values()].filter(m => {
-        if (m.author?.id !== this.client.user.id) return false;
-        const title = clean(m.embeds?.[0]?.title);
-        const author = clean(m.embeds?.[0]?.author?.name);
-        const titleMatch = (title.toLowerCase().includes("gmao music") || title.toLowerCase().includes("death music")) && title.includes("24/7");
-        const authorMatch = (author.toLowerCase().includes("gmao music") || author.toLowerCase().includes("death music")) && author.includes("24/7");
-        const componentMatch = m.components?.some(row => row.components?.some(component => String(component.customId || "").startsWith("death_music_")));
-        return titleMatch || authorMatch || componentMatch;
-      });
-      for (const panel of panels) {
-        try { await panel.delete(); } catch {}
-      }
+    try {
+      await this.ensurePanel(guildId);
+      console.log("📌 GMAO music panel refreshed in place; no repost.");
+      return true;
+    } catch (error) {
+      console.warn("⚠️ In-place panel refresh failed:", error?.message || error);
+      return false;
     }
-
-    state.panelMessageId = null;
-    state.panelChannelId = channel.id;
-    return this.ensurePanel(guildId);
   };
 
   MusicManager.prototype.refreshPanel = async function deathRichRefreshPanel(guildId) {
