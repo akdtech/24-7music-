@@ -401,32 +401,99 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
 
   MusicManager.prototype.skip = async function strictSkip(guildId) {
     const state = this.getState(guildId);
-    const player = this.players.get(guildId);
+    const player = this.players.get(guildId) || this.ensurePlayer(guildId);
     const current = state.current || player?.state?.resource?.metadata || null;
 
-    if (!current || !state.autoplay || state.queue.length) {
-      if (typeof MusicManager.prototype.__gmaoOriginalSkip === "function") {
-        return MusicManager.prototype.__gmaoOriginalSkip.call(this, guildId);
+    // IMPORTANT: never fall back to another patched skip() here.
+    // directControlsPatch delegates to __gmaoStrictSkip, so calling
+    // __gmaoOriginalSkip from this method can recurse forever:
+    // strictSkip -> fastSkip -> strictSkip -> ...
+    if (state.transitioning || state.autoplayBusy) return false;
+
+    // A manually queued track always wins over autoplay.
+    if (state.queue.length) {
+      const next = state.queue.shift();
+      state.transitioning = true;
+      const previous = current;
+      try {
+        if (previous) {
+          this.destroyStream(guildId);
+          try { player?.stop(true); } catch {}
+        }
+        state.current = null;
+        state.audioResource = null;
+        state.pendingTrack = next;
+        state.startedAt = 0;
+        state.positionOffset = 0;
+
+        await this.startTrack(guildId, next, 0, { handoff: true });
+        state.pendingTrack = null;
+        state.transitioning = false;
+        console.log("⏭️ Strict Skip -> queued track: " + titleOf(next));
+        return true;
+      } catch (error) {
+        state.pendingTrack = null;
+        state.transitioning = false;
+        console.warn("⚠️ Strict Skip queued-track start failed:", error?.message || error);
+
+        // If the queued track failed and autoplay is enabled, recover with a
+        // clean related track instead of leaving the voice player silent.
+        if (state.autoplay && !state.intentionalLeave) {
+          return this.autoplayNext(guildId, { forceRelated: true });
+        }
+
+        if (previous && !state.current) {
+          try { await this.startTrack(guildId, previous, 0, { handoff: true }); } catch {}
+        }
+        return false;
       }
-      return false;
     }
 
-    if (state.autoplayBusy) return false;
-
-    const oldTrack = state.current || current;
-    try {
-      const ok = await this.autoplayNext(guildId, { forceRelated: true, preserveCurrent: true });
-      if (!ok && oldTrack && !state.current) {
-        try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
+    // With autoplay enabled, search for the replacement BEFORE destroying
+    // the current stream. This prevents Skip from creating a silent gap.
+    if (state.autoplay && !state.intentionalLeave && current) {
+      const oldTrack = current;
+      try {
+        const ok = await this.autoplayNext(guildId, { forceRelated: true, preserveCurrent: true });
+        if (!ok && oldTrack && !state.current) {
+          try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
+        }
+        console.log("⏭️ Strict Skip -> related autoplay: " + titleOf(oldTrack));
+        return ok;
+      } catch (error) {
+        if (!state.current && oldTrack) {
+          try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
+        }
+        console.warn("⚠️ Strict Skip related transition failed:", error?.message || error);
+        return false;
       }
+    }
+
+    // No current track but autoplay is enabled: recover immediately.
+    if (state.autoplay && !state.intentionalLeave) {
+      const ok = await this.autoplayNext(guildId, { forceRelated: true });
+      console.log("⏭️ Strict Skip -> autoplay recovery: " + ok);
       return ok;
-    } catch (error) {
-      if (!state.current && oldTrack) {
-        try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
-      }
-      console.warn("⚠️ Strict Skip failed:", error?.message || error);
+    }
+
+    // Autoplay off and nothing queued: there is nothing to advance to.
+    // Keep the player state stable rather than throwing or recursing.
+    if (!current) {
+      Promise.resolve(this.refreshPanel(guildId)).catch(() => {});
       return false;
     }
+
+    // Autoplay off with an active track: perform a clean stop.
+    this.destroyStream(guildId);
+    try { player?.stop(true); } catch {}
+    state.current = null;
+    state.audioResource = null;
+    state.startedAt = 0;
+    state.positionOffset = 0;
+    state.transitioning = false;
+    Promise.resolve(this.refreshPanel(guildId)).catch(() => {});
+    console.log("⏭️ Strict Skip -> stopped current track (autoplay OFF): " + titleOf(current));
+    return true;
   };
 
   MusicManager.prototype.__gmaoStrictSkip = MusicManager.prototype.skip;
