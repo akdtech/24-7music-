@@ -767,6 +767,34 @@ class DirectMusicManager {
     return true;
   }
 
+
+  inferAutoplayLanguage(value) {
+    const text = String(value || "").toLowerCase();
+    if (/\b(punjabi|panjabi|sidhu moose wala|sidhu moosewala|karan aujla|ap dhillon|shubh|diljit|amrit maan|prem dhillon|gurinder gill|arjan dhillon|wazir patar|sunny malton|sukha|jordan sandhu|parmish verma|jazzy b|garry sandhu|ammy virk|raf saperra|talwiinder)\b/i.test(text)) return "pa";
+    if (/\b(hindi|bollywood|arijit singh|badshah|king|jubin nautiyal|shreya ghoshal|atif aslam|darshan raval|vishal mishra|anuv jain|aditya rikhari|karan khan)\b/i.test(text)) return "hi";
+    if (/\b(urdu|atif aslam|ali zafar|rahat fateh ali khan)\b/i.test(text)) return "ur";
+    if (/\b(arabic)\b/i.test(text)) return "ar";
+    if (/\b(spanish|espanol)\b/i.test(text)) return "es";
+    if (/\b(french)\b/i.test(text)) return "fr";
+    if (/\b(german|deutsch)\b/i.test(text)) return "de";
+    if (/\b(korean|kpop|k pop)\b/i.test(text)) return "ko";
+    if (/\b(japanese|jpop|j pop)\b/i.test(text)) return "ja";
+    if (/\b(english|english song|english songs|pop hits)\b/i.test(text)) return "en";
+    return "unknown";
+  }
+
+  inferAutoplayGenre(value) {
+    const text = String(value || "").toLowerCase();
+    if (/\b(gangsta|hardcore|trap|drill|hip[\s-]?hop|rap|grime)\b/i.test(text)) return "hiphop";
+    if (/\b(bhangra|punjabi|desi|bollywood|indian pop)\b/i.test(text)) return "desi";
+    if (/\b(pop|dance pop|synth pop|electropop)\b/i.test(text)) return "pop";
+    if (/\b(r&b|rnb|soul|neo soul)\b/i.test(text)) return "rnb";
+    if (/\b(rock|alternative|indie rock|metal)\b/i.test(text)) return "rock";
+    if (/\b(edm|house|techno|trance|dubstep|electronic)\b/i.test(text)) return "electronic";
+    if (/\b(reggae|dancehall)\b/i.test(text)) return "reggae";
+    return "unknown";
+  }
+
   async play({ guildId, voiceId, query, requester }) {
     const clean = this.cleanQuery(query);
     if (!clean) throw new Error("Please provide a song name or URL.");
@@ -838,10 +866,21 @@ class DirectMusicManager {
 
     // Nothing is playing: start the requested song immediately.
     state.manualGeneration++;
+    const contextLanguage = this.inferAutoplayLanguage(clean);
+    const contextGenre =
+      this.inferAutoplayGenre(clean) !== "unknown"
+        ? this.inferAutoplayGenre(clean)
+        : (track.genre || this.inferAutoplayGenre(track.author) !== "unknown" ? this.inferAutoplayGenre(track.author) : null);
+
     state.autoplayContext = {
       title: track.title,
       author: track.author,
-      genre: track.genre || null,
+      artist: track.author,
+      genre: contextGenre || null,
+      language: contextLanguage !== "unknown" ? contextLanguage : null,
+      languageLocked: contextLanguage !== "unknown",
+      genreLocked: Boolean(contextGenre),
+      query: clean,
       id: this.getTrackId(track)
     };
 
@@ -1002,7 +1041,12 @@ class DirectMusicManager {
       state.autoplayContext = {
         title: next.title,
         author: next.author,
-        genre: next.genre || null,
+        artist: next.author,
+        genre: next.genre || state.autoplayContext?.genre || null,
+        language: next.language || state.autoplayContext?.language || null,
+        languageLocked: Boolean(state.autoplayContext?.languageLocked || state.autoplayContext?.language),
+        genreLocked: Boolean(next.genre || state.autoplayContext?.genre),
+        query: state.autoplayContext?.query || next.title,
         id: this.getTrackId(next)
       };
       await this.startTrack(guildId, next).catch(error => console.warn("⚠️ Next track failed:", error?.message || error));
