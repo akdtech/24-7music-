@@ -222,8 +222,12 @@ async function findNext(manager, state) {
 
   const seeds = [];
   if (title && artist) {
-    seeds.push("songs like " + title + " by " + artist + " " + langName + " " + genreName + " similar artists official audio");
-    seeds.push(artist + " similar artists " + langName + " " + genreName + " official audio");
+    // Never seed autoplay with the artist alone. That overwhelmingly returns
+    // another song by the same artist. Ask YouTube explicitly for comparable
+    // artists and exclude the current artist from the query.
+    seeds.push("artists similar to " + artist + " " + langName + " " + genreName + " excluding " + artist + " official audio");
+    seeds.push("songs like " + title + " by " + artist + " " + langName + " " + genreName + " different artist official audio");
+    seeds.push(artist + " similar artists " + langName + " " + genreName + " not " + artist + " official audio");
   }
   if (langName && genreName) seeds.push(langName + " " + genreName + " similar songs official audio");
   if (langName) seeds.push(langName + " songs similar to " + (title || artist) + " official audio");
@@ -242,7 +246,7 @@ async function findNext(manager, state) {
   // 20-second searches could make Skip leave the voice channel silent for
   // 30-60+ seconds. Flat YouTube search is enough here because language and
   // genre are inferred from the artist/title maps below.
-  const seedList = [...new Set(seeds)].slice(0, 3);
+  const seedList = [...new Set(seeds)].slice(0, 4);
   const searchResults = await Promise.all(seedList.map(async seed => {
     try {
       console.log("🔎 Context autoplay search: " + seed);
@@ -295,12 +299,13 @@ async function findNext(manager, state) {
   }
 
   if (!candidates.length) {
-    console.warn("⚠️ No clean same-language + same-genre candidate found; refusing unrelated autoplay.");
+    console.warn("⚠️ No clean same-language + same-genre DIFFERENT-ARTIST candidate found; refusing same-artist autoplay.");
     return null;
   }
 
-  const differentArtist = candidates.filter(x => !x.artistMatch);
-  const related = (differentArtist.length ? differentArtist : candidates).sort((a,b)=>b.score-a.score);
+  // A known current artist is a hard exclusion. Never fall back to the same
+  // artist just because YouTube returned poor search results.
+  const related = candidates.filter(x => !x.artistMatch).sort((a,b)=>b.score-a.score);
   const top = related[0].score;
   const pool = related.filter(x => x.score >= top - 120).slice(0,8);
   const chosen = pool[Math.floor(Math.random() * pool.length)] || related[0];
