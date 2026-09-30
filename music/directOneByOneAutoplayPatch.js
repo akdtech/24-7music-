@@ -166,7 +166,9 @@ async function findNext(manager, state) {
     ["sikander kahlon","pa"],["talwiinder","pa"],["dilpreet dhillon","pa"],["gurnam bhullar","pa"],
     ["karan randhawa","pa"],["hustinder","pa"],["cheema y","pa"],["jass manak","pa"],["guru randhawa","pa"],
     ["arijit singh","hi"],["badshah","hi"],["king","hi"],["jubin nautiyal","hi"],["shreya ghoshal","hi"],
-    ["darshan raval","hi"],["vishal mishra","hi"],["anuv jain","hi"],["aditya rikhari","hi"],["atif aslam","ur"]
+    ["darshan raval","hi"],["vishal mishra","hi"],["anuv jain","hi"],["aditya rikhari","hi"],["raftaar","hi"],
+    ["divine","hi"],["emiway bantai","hi"],["yo yo honey singh","hi"],["armaan malik","hi"],
+    ["pritam","hi"],["sonu nigam","hi"],["atif aslam","ur"],["ali zafar","ur"]
   ]);
   const genreMap = new Map([
     ["sidhu moose wala","hiphop"],["sidhu moosewala","hiphop"],["karan aujla","hiphop"],
@@ -174,10 +176,17 @@ async function findNext(manager, state) {
     ["arjan dhillon","hiphop"],["wazir patar","hiphop"],["sunny malton","hiphop"],["sukha","hiphop"]
   ]);
   const languageOf = track => {
+    const artist = norm(artistOf(track));
+    // Prefer a known artist-language mapping over YouTube's stream language.
+    // YouTube can expose English as a translated/format fallback even when
+    // the actual song is Punjabi/Hindi.
+    for (const [name, code] of languageMap) {
+      if (artist === name || artist.includes(name) || name.includes(artist)) return code;
+    }
     const explicit = track?.language || track?.defaultAudioLanguage || track?.default_audio_language ||
       track?.defaultLanguage || track?.default_language;
     if (explicit) return String(explicit).toLowerCase().split(/[-_]/)[0];
-    const text = clean([track?.title,track?.author,track?.uploader,track?.genre,track?.category].filter(Boolean).join(" ")).toLowerCase();
+    const text = clean([track?.title,track?.author,track?.uploader,track?.genre,track?.category,track?.description].filter(Boolean).join(" ")).toLowerCase();
     if (/[\u0a00-\u0a7f]/.test(text)) return "pa";
     if (/[\u0900-\u097f]/.test(text)) return "hi";
     if (/\b(punjabi|panjabi)\b/.test(text)) return "pa";
