@@ -146,47 +146,11 @@ client.once(Events.ClientReady, async readyClient => {
   }
 });
 
-// Sticky music panel: after a user sends a message in the music channel,
-// recreate the single control panel at the very bottom. Editing a Discord
-// message does not move it, so the panel must be recreated to stay last.
-let stickyPanelTimer = null;
-let stickyPanelBusy = false;
-let stickyPanelPending = false;
-
-client.on(Events.MessageCreate, message => {
-  if (!message.guildId || message.author?.bot) return;
-  if (message.guildId !== config.guildId) return;
-  if (!music.musicTextChannelId || message.channelId !== music.musicTextChannelId) return;
-
-  stickyPanelPending = true;
-  clearTimeout(stickyPanelTimer);
-  stickyPanelTimer = setTimeout(async () => {
-    if (stickyPanelBusy) return;
-    stickyPanelBusy = true;
-    try {
-      while (stickyPanelPending) {
-        stickyPanelPending = false;
-        const state = music.getState(message.guildId);
-        if (!state.panelMessageId) await music.ensurePanel(message.guildId).catch(() => {});
-        else await music.movePanelToBottom(message.guildId);
-        await new Promise(resolve => setTimeout(resolve, 150));
-      }
-    } catch (error) {
-      console.warn("⚠️ Sticky music panel move failed:", error?.message || error);
-    } finally {
-      stickyPanelBusy = false;
-      if (stickyPanelPending) {
-        clearTimeout(stickyPanelTimer);
-        stickyPanelTimer = setTimeout(() => {
-          stickyPanelBusy = false;
-          stickyPanelPending = true;
-          const state = music.getState(message.guildId);
-          music.movePanelToBottom(message.guildId).catch(error => console.warn("⚠️ Sticky music panel retry failed:", error?.message || error));
-        }, 50);
-      }
-    }
-  }, 250);
-});
+// The music panel is deliberately NOT moved when users send messages.
+// It stays where it is while the channel is active. The music manager
+// schedules one bottom-of-channel refresh 30 seconds after a new track
+// starts, which keeps chat readable instead of constantly pushing messages
+// upward.
 const MUSIC_ACTION_JOKES = [
   "🎧 **{user}** just used **{action}** — the DJ has been notified. Please remain calm. 😂",
   "🤣 **{user}** hit **{action}** — bro really said 'let DEATH handle the music.'",
