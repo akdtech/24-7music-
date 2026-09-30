@@ -71,6 +71,7 @@ class DirectMusicManager {
     this.recoveryStarted = false;
     this.connectionOperations = new Map();
     this.reconnectPromises = new Map();
+    this.panelMoveTimers = new Map();
 
     this.musicVoiceChannelId =
       process.env.MUSIC_VOICE_CHANNEL_ID ||
@@ -849,6 +850,20 @@ class DirectMusicManager {
       queued: false
     };
   }
+  schedulePanelMoveToBottom(guildId) {
+    const previous = this.panelMoveTimers.get(guildId);
+    if (previous) clearTimeout(previous);
+
+    const timer = setTimeout(() => {
+      this.panelMoveTimers.delete(guildId);
+      this.movePanelToBottom(guildId).catch(error =>
+        console.warn("⚠️ Delayed sticky panel move failed:", error?.message || error)
+      );
+    }, 30000);
+
+    this.panelMoveTimers.set(guildId, timer);
+  }
+
   async startTrack(guildId, track, startMs = 0, options = {}) {
     const state = this.getState(guildId);
     const player = this.players.get(guildId) || this.ensurePlayer(guildId);
@@ -941,6 +956,10 @@ class DirectMusicManager {
     }
 
     await this.refreshPanel(guildId).catch(() => {});
+    // Keep the panel stable while people are chatting. Once 30 seconds have
+    // passed since the new song actually started, recreate it at the bottom
+    // so the latest controls/current song remain easy to reach.
+    this.schedulePanelMoveToBottom(guildId);
     console.log("▶️ DISCORD VC PLAYBACK STARTED:", track.title, "[" + (track.source || "direct") + "]");
     return true;
   }
@@ -1302,21 +1321,21 @@ class DirectMusicManager {
       .setTimestamp();
 
     const row1 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("death_music_pause").setLabel("Pause").setEmoji("⏸️").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_resume").setLabel("Resume").setEmoji("▶️").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId("death_music_skip").setLabel("Skip").setEmoji("⏭️").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("death_music_stop").setLabel("Stop").setEmoji("⏹️").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("death_music_shuffle").setLabel("Shuffle").setEmoji("🔀").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("death_music_resume").setEmoji("▶️").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId("death_music_pause").setEmoji("⏸️").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("death_music_skip").setEmoji("⏭️").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("death_music_stop").setEmoji("⏹️").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("death_music_queue").setEmoji("📜").setStyle(ButtonStyle.Secondary)
     );
     const row2 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("death_music_queue").setLabel("Queue").setEmoji("📜").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_loop").setLabel("Loop").setEmoji("🔁").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_vol_down").setLabel("Vol -").setEmoji("🔉").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_vol_up").setLabel("Vol +").setEmoji("🔊").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_autoplay").setLabel(`Autoplay ${state.autoplay ? "ON" : "OFF"}`).setEmoji("♾️").setStyle(state.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("death_music_vol_down").setEmoji("🔉").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("death_music_shuffle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("death_music_loop").setEmoji("🔁").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("death_music_vol_up").setEmoji("🔊").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("death_music_autoplay").setEmoji("♾️").setStyle(state.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
     );
     const row3 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("death_music_refresh").setLabel("Refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("death_music_refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary)
     );
     return { embeds: [embed], components: [row1, row2, row3] };
   }
@@ -1442,6 +1461,8 @@ class DirectMusicManager {
 
   async shutdown() {
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    for (const timer of this.panelMoveTimers.values()) clearTimeout(timer);
+    this.panelMoveTimers.clear();
     for (const guildId of this.connections.keys()) {
       this.destroyStream(guildId);
       try { this.players.get(guildId)?.stop(true); } catch {}
