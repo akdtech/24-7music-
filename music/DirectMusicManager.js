@@ -119,7 +119,8 @@ class DirectMusicManager {
         intentionalLeave: false,
         retryTimer: null,
         autoplayContext: null,
-        transitioning: false
+        transitioning: false,
+        actionStatus: ""
       });
     }
     return this.states.get(guildId);
