@@ -162,6 +162,19 @@ const MUSIC_ACTION_JOKES = [
   "🎶 **{user}** used **{action}** — Spotify lawyers have been notified. (Probably.)"
 ];
 
+function deleteMusicMessageLater(message, delay = 15000) {
+  if (!message?.deletable) return;
+  setTimeout(() => message.delete().catch(() => {}), delay);
+}
+
+function deleteInteractionReplyLater(interaction, delay = 15000) {
+  setTimeout(() => {
+    if (interaction?.replied || interaction?.deferred) {
+      interaction.deleteReply().catch(() => {});
+    }
+  }, delay);
+}
+
 async function announceMusicAction(interaction, action) {
   if (!interaction?.guildId) return;
 
@@ -179,10 +192,11 @@ async function announceMusicAction(interaction, action) {
     .replace("{action}", action);
 
   try {
-    await channel.send({
+    const message = await channel.send({
       content: joke,
       allowedMentions: { users: [] }
     });
+    deleteMusicMessageLater(message, 15000);
   } catch (error) {
     console.warn("⚠️ Music action announcement failed:", error?.message || error);
   }
@@ -216,9 +230,10 @@ client.on(Events.InteractionCreate, async interaction => {
         if (replyError?.code !== 10008) console.warn("⚠️ Command error response failed:", replyError?.message || replyError);
       }
     } finally {
-      // The panel is intentionally NOT recreated after every command.
-      // It is moved to the bottom only 30 seconds after a new track starts,
-      // so normal chat remains readable.
+      // Music command responses are temporary. Remove visible responses after
+      // 15 seconds so normal chat stays clean. The persistent music panel is
+      // never deleted by this cleanup.
+      deleteInteractionReplyLater(interaction, 15000);
     }
     return;
   }
