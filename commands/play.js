@@ -25,7 +25,7 @@ module.exports = {
       }
 
       return interaction.editReply(
-        `▶️ **Now playing in Discord VC**\\n🎵 **${track.title}** — **${track.author}**\\n🎧 **DEATH Music 24/7**\\n♾️ Autoplay: same artist/genre`
+        `▶️ **Now playing in Discord VC**\\n🎵 **${track.title}** — **${track.author}**\\n🎧 **GMAO Music 24/7**\\n♾️ Autoplay: same language + genre + related artists`
       );
     } catch (error) {
       console.error("play error:", error);
