@@ -201,25 +201,24 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
         try { oldPanel = await channel.messages.fetch(state.panelMessageId); } catch {}
       }
 
-      // Discord cannot reposition an existing message. After 20 seconds of
-      // quiet, recreate the single panel at the bottom, then remove the old
-      // copy. This gives the panel a real chronological move without spam.
-      const newPanel = await channel.send(this.buildPanelPayload(guildId));
-      state.panelMessageId = newPanel.id;
-      state.panelChannelId = channel.id;
+      // Discord cannot reposition a message. Recreate it only after the quiet
+      // period, but ALWAYS recreate through the rich ensurePanel() renderer.
+      // Never call the legacy buildPanelPayload() here: that renderer contains
+      // the old Volume/Loop/Shuffle/Stop/Refresh controls.
+      if (oldPanel) {
+        await oldPanel.delete();
+      }
 
+      state.panelMessageId = null;
+      state.panelChannelId = null;
+
+      const newPanel = await this.ensurePanel(guildId);
       if (newPanel && !newPanel.pinned) {
         await newPanel.pin("GMAO Music 24/7 panel moved to channel bottom").catch(() => {});
       }
 
-      if (oldPanel && oldPanel.id !== newPanel.id) {
-        await oldPanel.delete().catch(error =>
-          console.warn("⚠️ Old music panel cleanup failed:", error?.message || error)
-        );
-      }
-
-      console.log("📌 GMAO music panel moved to channel bottom after quiet period.");
-      return true;
+      console.log("📌 GMAO music panel moved to channel bottom with the current GMAO UI.");
+      return Boolean(newPanel);
     } catch (error) {
       console.warn("⚠️ Delayed music panel move failed:", error?.message || error);
       return false;
