@@ -193,11 +193,35 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
   MusicManager.prototype.movePanelToBottom = async function canonicalMovePanelToBottom(guildId) {
     const state = this.getState(guildId);
     try {
-      await this.ensurePanel(guildId);
-      console.log("📌 GMAO music panel refreshed in place; no repost.");
+      const channel = await this.findPanelChannel(guildId);
+      if (!channel) throw new Error("Music panel channel is not available.");
+
+      let oldPanel = null;
+      if (state.panelMessageId && state.panelChannelId === channel.id) {
+        try { oldPanel = await channel.messages.fetch(state.panelMessageId); } catch {}
+      }
+
+      // Discord cannot reposition an existing message. After 20 seconds of
+      // quiet, recreate the single panel at the bottom, then remove the old
+      // copy. This gives the panel a real chronological move without spam.
+      const newPanel = await channel.send(this.buildPanelPayload(guildId));
+      state.panelMessageId = newPanel.id;
+      state.panelChannelId = channel.id;
+
+      if (newPanel && !newPanel.pinned) {
+        await newPanel.pin("GMAO Music 24/7 panel moved to channel bottom").catch(() => {});
+      }
+
+      if (oldPanel && oldPanel.id !== newPanel.id) {
+        await oldPanel.delete().catch(error =>
+          console.warn("⚠️ Old music panel cleanup failed:", error?.message || error)
+        );
+      }
+
+      console.log("📌 GMAO music panel moved to channel bottom after quiet period.");
       return true;
     } catch (error) {
-      console.warn("⚠️ In-place panel refresh failed:", error?.message || error);
+      console.warn("⚠️ Delayed music panel move failed:", error?.message || error);
       return false;
     }
   };
