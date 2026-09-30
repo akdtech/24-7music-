@@ -81,8 +81,8 @@ function officialSignal(track) {
 function search(query) {
   return new Promise((resolve, reject) => {
     const child = spawn(YTDLP, [
-      "--no-warnings", "--no-progress", "--no-playlist", "--flat-playlist",
-      "--playlist-end", "12", "--js-runtimes", "node",
+      "--no-warnings", "--no-progress", "--no-playlist", "--no-flat-playlist",
+      "--skip-download", "--playlist-end", "10", "--js-runtimes", "node",
       "--extractor-args", "youtube:player_client=web_music,web_embedded",
       "--remote-components", "ejs:github",
       "--dump-single-json",
@@ -96,7 +96,7 @@ function search(query) {
         done = true;
         reject(new Error("autoplay search timeout"));
       }
-    }, 12000);
+    }, 20000);
 
     child.stdout.on("data", c => out += c.toString());
     child.stderr.on("data", c => err += c.toString());
@@ -133,7 +133,11 @@ function toTrack(entry, requester) {
     url: "https://www.youtube.com/watch?v=" + entry.id,
     title: titleOf(entry),
     author: clean(entry.uploader || entry.channel || entry.creator) || "Unknown artist",
-    genre: clean(entry.genre || entry.category || ""),
+    genre: clean(entry.genre || entry.category || (Array.isArray(entry.categories) ? entry.categories.join(" ") : "") || (Array.isArray(entry.tags) ? entry.tags.join(" ") : "")),
+    category: clean(Array.isArray(entry.categories) ? entry.categories.join(" ") : entry.category || ""),
+    language: clean(entry.language || entry.defaultAudioLanguage || entry.default_audio_language || entry.defaultLanguage || ""),
+    description: clean(entry.description || entry.shortDescription || ""),
+    tags: Array.isArray(entry.tags) ? entry.tags : [],
     length: Number(entry.duration || 0) * 1000,
     requester: requester || null,
     thumbnail: entry.thumbnail || "https://i.ytimg.com/vi/" + entry.id + "/hqdefault.jpg",
@@ -159,8 +163,10 @@ async function findNext(manager, state) {
     ["gurinder gill","pa"],["navaan sandhu","pa"],["arjan dhillon","pa"],["wazir patar","pa"],
     ["sunny malton","pa"],["sukha","pa"],["jordan sandhu","pa"],["parmish verma","pa"],
     ["jazzy b","pa"],["garry sandhu","pa"],["ammy virk","pa"],["raf saperra","pa"],
-    ["sikander kahlon","pa"],["talwiinder","pa"],["arijit singh","hi"],["badshah","hi"],
-    ["king","hi"],["jubin nautiyal","hi"],["shreya ghoshal","hi"],["atif aslam","ur"]
+    ["sikander kahlon","pa"],["talwiinder","pa"],["dilpreet dhillon","pa"],["gurnam bhullar","pa"],
+    ["karan randhawa","pa"],["hustinder","pa"],["cheema y","pa"],["jass manak","pa"],["guru randhawa","pa"],
+    ["arijit singh","hi"],["badshah","hi"],["king","hi"],["jubin nautiyal","hi"],["shreya ghoshal","hi"],
+    ["darshan raval","hi"],["vishal mishra","hi"],["anuv jain","hi"],["aditya rikhari","hi"],["atif aslam","ur"]
   ]);
   const genreMap = new Map([
     ["sidhu moose wala","hiphop"],["sidhu moosewala","hiphop"],["karan aujla","hiphop"],
@@ -198,8 +204,8 @@ async function findNext(manager, state) {
     return g;
   };
 
-  const language = languageOf(ctx);
-  const targetGenre = genreFamily(genre) || artistGenre(ctx);
+  const language = ctx.languageLocked && ctx.language ? ctx.language : (ctx.language || languageOf(ctx));
+  const targetGenre = ctx.genreLocked && ctx.genre ? genreFamily(ctx.genre) : (genreFamily(genre) || artistGenre(ctx));
   const langName = {pa:"Punjabi",hi:"Hindi",ur:"Urdu",ar:"Arabic",bn:"Bengali",ta:"Tamil",te:"Telugu",ml:"Malayalam",ja:"Japanese",ko:"Korean",es:"Spanish",fr:"French",de:"German",pt:"Portuguese",en:"English"}[language] || "";
   const genreName = {hiphop:"hip hop",desi:"desi Punjabi",pop:"pop",rnb:"R&B",rock:"rock",electronic:"electronic"}[targetGenre] || "";
 
@@ -245,6 +251,7 @@ async function findNext(manager, state) {
 
         const candidateLanguage = languageOf(track);
         if (language !== "unknown" && candidateLanguage !== language) continue;
+        if (language !== "unknown" && candidateLanguage === "en" && language !== "en") continue;
 
         const candidateGenre = genreFamily(track.genre || track.category) || artistGenre(track) || genreFamily(seed);
         const sameGenre = !!targetGenre && candidateGenre === targetGenre;
@@ -322,6 +329,8 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
         artist: artistOf(next),
         genre: next.genre || state.autoplayContext?.genre || null,
         language: next.language || state.autoplayContext?.language || null,
+        languageLocked: Boolean(state.autoplayContext?.languageLocked || state.autoplayContext?.language),
+        genreLocked: Boolean(next.genre || state.autoplayContext?.genre || state.autoplayContext?.genreLocked),
         query: titleOf(next) + " " + artistOf(next),
         id
       };
