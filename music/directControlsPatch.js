@@ -53,6 +53,12 @@ if (!MusicManager.prototype.__deathFastControlsPatched) {
   };
 
   MusicManager.prototype.skip = async function fastSkip(guildId) {
+    // The strict autoplay patch searches for a valid replacement before
+    // cutting the current stream. Delegate to it whenever available.
+    if (typeof this.__gmaoStrictSkip === "function") {
+      return this.__gmaoStrictSkip.call(this, guildId);
+    }
+
     const state = this.getState(guildId);
     const player = this.players.get(guildId);
     if (state.transitioning) return;
