@@ -1,6 +1,6 @@
 "use strict";
 
-/* DEATH Music 24/7 — one persistent, pinned, live-synced player UI. */
+/* GMAO Music 24/7 — one persistent, pinned, live-synced player UI. */
 const MusicManager = require("./DirectMusicManager");
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { AudioPlayerStatus } = require("@discordjs/voice");
@@ -23,6 +23,12 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
     const filled = Math.min(slots - 1, Math.floor(ratio * slots));
     return `${"━".repeat(filled)}●${"━".repeat(Math.max(0, slots - filled - 1))}`;
   };
+  const waveform = () => {
+    const bars = ["▁","▂","▃","▄","▅","▆","▇","█"];
+    const offset = Math.floor(Date.now() / 450) % bars.length;
+    return Array.from({ length: 22 }, (_, i) => bars[(i * 3 + offset) % bars.length]).join("");
+  };
+
   const button = (id, label, emoji, style = ButtonStyle.Secondary) =>
     new ButtonBuilder().setCustomId(id).setLabel(label).setEmoji(emoji).setStyle(style).setDisabled(false);
 
@@ -46,26 +52,27 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
       const duration = Number(current?.length || 0);
       const position = this.getPosition(guildId);
       const title = clean(current?.title) || (state.transitioning ? "Loading next track…" : "Nothing is playing");
-      const author = clean(current?.author || current?.uploader) || "DEATH Music 24/7";
+      const author = clean(current?.author || current?.uploader) || "GMAO Music 24/7";
       const auto = Boolean(state.autoplay);
       const mode = current?.isAutoplay ? "♾️ Related autoplay" : "🎧 Manual selection";
       const status = paused ? "⏸️ Paused" : playing ? "▶️ Playing" : buffering ? "⏳ Buffering" : state.transitioning ? "⏳ Loading" : "⏹️ Ready";
 
       const embed = new EmbedBuilder()
         .setColor(0x6C5CE7)
-        .setAuthor({ name: "💀 DEATH MUSIC 24/7", iconURL: this.client.user.displayAvatarURL() })
+        .setAuthor({ name: "🎧 GMAO MUSIC • 24/7", iconURL: this.client.user.displayAvatarURL() })
         .setTitle(title)
         .setDescription(
           `🎤 **${author}**\n` +
           `> ${mode}\n\n` +
           `\`${bar(position, duration)}\`\n` +
-          `\`${format(position)}\` / \`${format(duration)}\`  •  **${status}**`
+          `\`${format(position)}\` / \`${format(duration)}\`  •  **${status}**\n` +
+          `\`🎵 ${waveform()} 🎵\``
         )
         .addFields(
           { name: "📜 Queue", value: `**${queued}**`, inline: true },
           { name: "♾️ Autoplay", value: auto ? "**ON**" : "OFF", inline: true }
         )
-        .setFooter({ text: "DEATH × GMAO  •  24/7 Music  •  Made by DEATH" })
+        .setFooter({ text: "www.gmaog.com  •  DEATH × GMAOG" })
         .setTimestamp();
 
       if (current?.thumbnail && /^https?:\/\//i.test(current.thumbnail)) {
@@ -102,8 +109,8 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
               if (m.author?.id !== this.client.user.id) return false;
               const title = clean(m.embeds?.[0]?.title);
               const author = clean(m.embeds?.[0]?.author?.name);
-              const titleMatch = /DEATH\s+MUSIC\s*[•·-]?\s*24\/7/i.test(title) || /DEATH\s+Music\s+24\/7/i.test(title);
-              const authorMatch = /DEATH\s+MUSIC\s+24\/7/i.test(author);
+              const titleMatch = /GMAO\s+MUSIC\s*[•·-]?\s*24\/7/i.test(title) || /GMAO\s+Music\s+24\/7/i.test(title);
+              const authorMatch = /GMAO\s+MUSIC\s+24\/7/i.test(author) || /DEATH\s+MUSIC\s+24\/7/i.test(author);
               const componentMatch = m.components?.some(row => row.components?.some(component => String(component.customId || "").startsWith("death_music_")));
               return titleMatch || authorMatch || componentMatch;
             })
@@ -142,7 +149,7 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
       }
 
       if (message && !message.pinned) {
-        await message.pin("DEATH Music 24/7 persistent control panel").catch(() => {});
+        await message.pin("GMAO Music 24/7 persistent control panel").catch(() => {});
       }
       return message;
     };
@@ -157,6 +164,26 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
     return wrapped;
   };
 
+  if (!MusicManager.prototype.__gmaoLiveAnimation) {
+    MusicManager.prototype.__gmaoLiveAnimation = true;
+    const originalSetup = MusicManager.prototype.setupPlayerEvents;
+    MusicManager.prototype.setupPlayerEvents = function gmaoAnimatedSetup() {
+      originalSetup.call(this);
+      this.client.once("ready", () => {
+        if (this.__gmaoAnimationTimer) return;
+        this.__gmaoAnimationTimer = setInterval(() => {
+          const guildId = this.musicGuildId;
+          if (!guildId) return;
+          const state = this.getState(guildId);
+          if (state.permanent && !state.intentionalLeave && state.current) {
+            this.refreshPanel(guildId).catch(() => {});
+          }
+        }, 4000);
+        console.log("🎚️ GMAO music panel live animation active.");
+      });
+    };
+  }
+
   // The legacy DirectMusicManager has its own movePanelToBottom() which builds the old
   // Volume/Loop/Shuffle/Stop/Refresh UI. Override it here so sticky-panel recreation
   // can NEVER resurrect those controls.
@@ -170,8 +197,8 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
         if (m.author?.id !== this.client.user.id) return false;
         const title = clean(m.embeds?.[0]?.title);
         const author = clean(m.embeds?.[0]?.author?.name);
-        const titleMatch = title.toLowerCase().includes("death music") && title.includes("24/7");
-        const authorMatch = author.toLowerCase().includes("death music") && author.includes("24/7");
+        const titleMatch = (title.toLowerCase().includes("gmao music") || title.toLowerCase().includes("death music")) && title.includes("24/7");
+        const authorMatch = (author.toLowerCase().includes("gmao music") || author.toLowerCase().includes("death music")) && author.includes("24/7");
         const componentMatch = m.components?.some(row => row.components?.some(component => String(component.customId || "").startsWith("death_music_")));
         return titleMatch || authorMatch || componentMatch;
       });
@@ -195,5 +222,5 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
     }
   };
 
-  console.log("🎨 DEATH music panel loaded: Pause, Play, Skip, Queue + Autoplay only; no Volume/Shuffle.");
+  console.log("🎨 GMAO Music panel loaded: five controls + live animation.");
 }
