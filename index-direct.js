@@ -261,8 +261,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const isQueue = interaction.customId === "death_music_queue";
     try {
-      if (isQueue) await interaction.deferReply({ ephemeral: true });
-      else await interaction.deferUpdate();
+      // Always acknowledge with a visible ephemeral progress reply. Some music
+      // actions (especially Skip/autoplay) can spend time resolving YouTube;
+      // deferUpdate() only shows a vague Discord spinner and makes the bot
+      // appear frozen.
+      await interaction.deferReply({ ephemeral: true });
     } catch (error) {
       if (error?.code !== 10008) console.warn("⚠️ Music button acknowledgement failed:", error?.message || error);
       return;
@@ -286,6 +289,11 @@ client.on(Events.InteractionCreate, async interaction => {
       interaction,
       buttonActionNames[interaction.customId] || interaction.customId.replace(/^death_music_/, "")
     ).catch(() => {});
+
+    const actionLabel = buttonActionNames[interaction.customId] || "Music action";
+    if (!isQueue) {
+      await interaction.editReply({ content: "⏳ **" + actionLabel + " requested…**" }).catch(() => {});
+    }
 
     try {
       switch (interaction.customId) {
@@ -342,11 +350,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
       await music.refreshPanel(guildId).catch(() => {});
       if (isQueue) return;
+
+      const completion = {
+        death_music_pause: "⏸️ Music paused.",
+        death_music_resume: "▶️ Music resumed.",
+        death_music_skip: "⏭️ Skip complete — next track is playing.",
+        death_music_autoplay: "♾️ Autoplay updated.",
+        death_music_queue: "📜 Queue loaded."
+      }[interaction.customId] || "✅ Done.";
+      await interaction.editReply({ content: completion }).catch(() => {});
+      deleteMusicMessageLater(null, 7000);
       // Do not recreate/move the panel for every button press.
       // The music manager handles the delayed 30-second bottom move.
     } catch (error) {
       console.error("❌ Music button error:", error);
       await music.refreshPanel(guildId).catch(() => {});
+      await interaction.editReply({ content: "❌ **" + String(error?.message || error).slice(0, 1500) + "**" }).catch(() => {});
       return;
     }
   }
