@@ -55,7 +55,7 @@ if (!MusicManager.prototype.__deathDirectPanelPatched) {
       const author = clean(current?.author || current?.uploader) || "GMAO Music 24/7";
       const auto = Boolean(state.autoplay);
       const mode = current?.isAutoplay ? "♾️ Related autoplay" : "🎧 Manual selection";
-      const status = paused ? "⏸️ Paused" : playing ? "▶️ Playing" : buffering ? "⏳ Buffering" : state.transitioning ? "⏳ Loading" : "⏹️ Ready";
+      const status = state.actionStatus || (paused ? "⏸️ Paused" : playing ? "▶️ Playing" : buffering ? "⏳ Buffering" : state.transitioning ? "⏳ Loading" : "⏹️ Ready");
 
       const embed = new EmbedBuilder()
         .setColor(0x6C5CE7)
