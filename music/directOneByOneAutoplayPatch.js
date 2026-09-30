@@ -236,6 +236,10 @@ async function findNext(manager, state) {
   const recentIds = new Set((state.recent || []).map(String));
   const recentSongs = new Set((state.recentSongs || []).map(String));
   const recentTitles = new Set((state.recentTitles || []).map(String));
+  // Artist cooldown: allow the same artist again, but not repeatedly.
+  // Two different artists must play before an artist can rotate back in.
+  const recentArtists = (state.recentArtists || []).map(a => norm(a)).filter(Boolean);
+  const artistCooldown = new Set(recentArtists.slice(-2));
   if (ctx.id) recentIds.add(String(ctx.id));
   if (ctx.title) recentTitles.add(canonicalTitle(ctx.title));
 
@@ -299,13 +303,14 @@ async function findNext(manager, state) {
   }
 
   if (!candidates.length) {
-    console.warn("⚠️ No clean same-language + same-genre DIFFERENT-ARTIST candidate found; refusing same-artist autoplay.");
+    console.warn("⚠️ No clean same-language + same-genre candidate found.");
     return null;
   }
 
-  // A known current artist is a hard exclusion. Never fall back to the same
-  // artist just because YouTube returned poor search results.
-  const related = candidates.filter(x => !x.artistMatch).sort((a,b)=>b.score-a.score);
+  // Prefer a different artist, but allow the current artist when its cooldown
+  // has expired. This gives a natural mix instead of a hard never-repeat rule.
+  const differentArtist = candidates.filter(x => !x.artistMatch);
+  const related = (differentArtist.length ? differentArtist : candidates).sort((a,b)=>b.score-a.score);
   const top = related[0].score;
   const pool = related.filter(x => x.score >= top - 120).slice(0,8);
   const chosen = pool[Math.floor(Math.random() * pool.length)] || related[0];
@@ -350,6 +355,7 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
         : "Same genre / clean related";
 
       addHistory(state, next);
+      state.recentArtists = [...(state.recentArtists || []), norm(artistOf(next))].filter(Boolean).slice(-2);
 
       const id = idOf(next);
 
