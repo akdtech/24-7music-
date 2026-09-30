@@ -165,10 +165,10 @@ async function findNext(manager, state) {
   const seeds = [];
 
   if (artist) {
+    // Keep same-artist discovery available, but never make it the only
+    // definition of "related".
     seeds.push(artist + " songs official audio");
     seeds.push(artist + " official songs");
-    seeds.push(artist + " latest songs official audio");
-    seeds.push(artist + " other songs official audio");
   }
 
   if (genre) {
@@ -177,7 +177,12 @@ async function findNext(manager, state) {
   }
 
   if (title && artist) {
-    seeds.push(artist + " " + title + " related songs official audio");
+    // These searches intentionally target similar music from OTHER artists.
+    // YouTube often has no reliable genre field, so "songs like" is used as
+    // the genre/style signal instead of forcing same-artist playback.
+    seeds.push("songs like " + title + " by " + artist + " similar artists");
+    seeds.push(artist + " " + title + " similar songs different artists");
+    seeds.push(artist + " similar artists songs");
   }
 
   if (query && !artist) {
@@ -255,6 +260,7 @@ async function findNext(manager, state) {
         // Same Genre candidate, provided it is not an artist-specific query.
         const genreSeed = !!genre && norm(seed).startsWith(norm(genre));
         const artistSeed = !!artist && norm(seed).includes(norm(artist));
+        const similarArtistSeed = /similar artists|similar songs|songs like/.test(norm(seed));
 
         let relation = "Unrelated";
         let score = officialSignal(track);
@@ -262,9 +268,13 @@ async function findNext(manager, state) {
         if (artistMatch) {
           relation = "Same Artist";
           score += 1000;
-        } else if (genreMatch || (genreSeed && !artistSeed)) {
+          // Similar-artist searches are specifically intended to leave the
+          // current artist, so same-artist hits from those searches get no
+          // genre/similar-artist boost.
+          if (similarArtistSeed) score -= 650;
+        } else if (genreMatch || (genreSeed && !artistSeed) || similarArtistSeed) {
           relation = "Same Genre";
-          score += 700;
+          score += similarArtistSeed ? 850 : 700;
         }
 
         if (track.length >= 90 * 1000 && track.length <= 6 * 60 * 1000) score += 25;
@@ -295,12 +305,14 @@ async function findNext(manager, state) {
   // the radio related to the current track without becoming an artist-only
   // station.
   let related = [];
-  if (sameArtistCandidates.length && sameGenreCandidates.length) {
-    const useGenre = Math.random() < 0.5;
-    related = useGenre ? sameGenreCandidates : sameArtistCandidates;
-    console.log("🧭 Autoplay relation choice: " + (useGenre ? "Same Genre" : "Same Artist"));
+  if (sameGenreCandidates.length) {
+    // Prefer genre/similar-artist rotation whenever it is available. This
+    // prevents /skip from becoming an "artist-only" radio station.
+    related = sameGenreCandidates;
+    console.log("🧭 Autoplay relation choice: Same Genre / Similar Artist");
   } else {
-    related = sameArtistCandidates.length ? sameArtistCandidates : sameGenreCandidates;
+    related = sameArtistCandidates;
+    if (related.length) console.log("🧭 Autoplay relation choice: Same Artist (no different-artist related result found)");
   }
 
   // After a process restart/reconnect there may be no previous track context.
