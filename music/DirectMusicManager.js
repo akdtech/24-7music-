@@ -895,16 +895,17 @@ class DirectMusicManager {
       queued: false
     };
   }
-  schedulePanelMoveToBottom(guildId) {
+  schedulePanelMoveToBottom(guildId, delay = 30000) {
     const previous = this.panelMoveTimers.get(guildId);
     if (previous) clearTimeout(previous);
 
+    const safeDelay = Math.max(1000, Number(delay) || 30000);
     const timer = setTimeout(() => {
       this.panelMoveTimers.delete(guildId);
       this.movePanelToBottom(guildId).catch(error =>
         console.warn("⚠️ Delayed sticky panel move failed:", error?.message || error)
       );
-    }, 30000);
+    }, safeDelay);
 
     this.panelMoveTimers.set(guildId, timer);
   }
