@@ -394,7 +394,10 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
       console.log("♾️ 24/7 strict autoplay: " + titleOf(next) + " — " + artistOf(next));
       return true;
     } catch (error) {
-      state.current = null;
+      // During Skip/preserve-current mode the old track is intentionally kept
+      // alive while searching. Never erase state.current just because search
+      // returned no valid candidate.
+      if (!preserveCurrent) state.current = null;
       state.transitioning = false;
       console.warn("⚠️ 24/7 strict autoplay track failed:", error?.message || error);
       return false;
