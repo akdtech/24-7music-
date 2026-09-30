@@ -410,6 +410,9 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
     // strictSkip -> fastSkip -> strictSkip -> ...
     if (state.transitioning || state.autoplayBusy) return false;
 
+    state.actionStatus = "⏭️ Finding next track…";
+    this.refreshPanel(guildId).catch(() => {});
+
     // A manually queued track always wins over autoplay.
     if (state.queue.length) {
       const next = state.queue.shift();
@@ -426,14 +429,21 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
         state.startedAt = 0;
         state.positionOffset = 0;
 
+        state.actionStatus = "⏭️ Loading " + titleOf(next);
+        this.refreshPanel(guildId).catch(() => {});
         await this.startTrack(guildId, next, 0, { handoff: true });
         state.pendingTrack = null;
         state.transitioning = false;
+        state.actionStatus = "";
+        this.refreshPanel(guildId).catch(() => {});
         console.log("⏭️ Strict Skip -> queued track: " + titleOf(next));
         return true;
       } catch (error) {
         state.pendingTrack = null;
         state.transitioning = false;
+        state.actionStatus = "❌ Skip failed — keeping playback";
+        this.refreshPanel(guildId).catch(() => {});
+        setTimeout(() => { if (this.getState(guildId).actionStatus === "❌ Skip failed — keeping playback") { this.getState(guildId).actionStatus = ""; this.refreshPanel(guildId).catch(() => {}); } }, 5000);
         console.warn("⚠️ Strict Skip queued-track start failed:", error?.message || error);
 
         // If the queued track failed and autoplay is enabled, recover with a
@@ -454,16 +464,24 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
     if (state.autoplay && !state.intentionalLeave && current) {
       const oldTrack = current;
       try {
+        state.actionStatus = "⏭️ Searching for a related track…";
+        this.refreshPanel(guildId).catch(() => {});
         const ok = await this.autoplayNext(guildId, { forceRelated: true, preserveCurrent: true });
         if (!ok && oldTrack && !state.current) {
           try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
         }
+        state.actionStatus = ok ? "" : "❌ No valid next track — current song kept";
+        this.refreshPanel(guildId).catch(() => {});
+        if (!ok) setTimeout(() => { if (this.getState(guildId).actionStatus === "❌ No valid next track — current song kept") { this.getState(guildId).actionStatus = ""; this.refreshPanel(guildId).catch(() => {}); } }, 5000);
         console.log("⏭️ Strict Skip -> related autoplay: " + titleOf(oldTrack));
         return ok;
       } catch (error) {
         if (!state.current && oldTrack) {
           try { await this.startTrack(guildId, oldTrack, 0, { handoff: true }); } catch {}
         }
+        state.actionStatus = "❌ Skip failed — current song kept";
+        this.refreshPanel(guildId).catch(() => {});
+        setTimeout(() => { if (this.getState(guildId).actionStatus === "❌ Skip failed — current song kept") { this.getState(guildId).actionStatus = ""; this.refreshPanel(guildId).catch(() => {}); } }, 5000);
         console.warn("⚠️ Strict Skip related transition failed:", error?.message || error);
         return false;
       }
@@ -471,7 +489,11 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
 
     // No current track but autoplay is enabled: recover immediately.
     if (state.autoplay && !state.intentionalLeave) {
+      state.actionStatus = "⏭️ Recovering music…";
+      this.refreshPanel(guildId).catch(() => {});
       const ok = await this.autoplayNext(guildId, { forceRelated: true });
+      state.actionStatus = ok ? "" : "❌ Music recovery failed";
+      this.refreshPanel(guildId).catch(() => {});
       console.log("⏭️ Strict Skip -> autoplay recovery: " + ok);
       return ok;
     }
@@ -491,6 +513,7 @@ if (!MusicManager.prototype.__deathOneByOneAutoplay) {
     state.startedAt = 0;
     state.positionOffset = 0;
     state.transitioning = false;
+    state.actionStatus = "";
     Promise.resolve(this.refreshPanel(guildId)).catch(() => {});
     console.log("⏭️ Strict Skip -> stopped current track (autoplay OFF): " + titleOf(current));
     return true;
