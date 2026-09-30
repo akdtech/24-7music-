@@ -198,7 +198,7 @@ async function announceMusicAction(interaction, action) {
       content: joke,
       allowedMentions: { users: [] }
     });
-    deleteMusicMessageLater(message, 15000);
+    deleteMusicMessageLater(message, 7000);
   } catch (error) {
     console.warn("⚠️ Music action announcement failed:", error?.message || error);
   }
@@ -235,7 +235,7 @@ client.on(Events.InteractionCreate, async interaction => {
       // Music command responses are temporary. Remove visible responses after
       // 15 seconds so normal chat stays clean. The persistent music panel is
       // never deleted by this cleanup.
-      deleteInteractionReplyLater(interaction, 15000);
+      deleteInteractionReplyLater(interaction, 7000);
     }
     return;
   }
