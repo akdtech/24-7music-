@@ -164,12 +164,12 @@ const MUSIC_ACTION_JOKES = [
   "🎶 **{user}** used **{action}** — Spotify lawyers have been notified. (Probably.)"
 ];
 
-function deleteMusicMessageLater(message, delay = 15000) {
+function deleteMusicMessageLater(message, delay = 7000) {
   if (!message?.deletable) return;
   setTimeout(() => message.delete().catch(() => {}), delay);
 }
 
-function deleteInteractionReplyLater(interaction, delay = 15000) {
+function deleteInteractionReplyLater(interaction, delay = 7000) {
   setTimeout(() => {
     if (interaction?.replied || interaction?.deferred) {
       interaction.deleteReply().catch(() => {});
@@ -204,6 +204,18 @@ async function announceMusicAction(interaction, action) {
   }
 }
 
+client.on(Events.MessageCreate, message => {
+  if (!message || message.author?.bot || !message.guildId) return;
+  if (message.guildId !== config.guildId) return;
+
+  const channelId = music.musicTextChannelId || config.musicTextChannelId;
+  if (!channelId || message.channelId !== channelId) return;
+
+  // User activity resets the quiet-period timer. The panel will move only
+  // after 5 seconds with no new human message.
+  music.schedulePanelMoveToBottom(message.guildId, 5000);
+});
+
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isChatInputCommand()) {
     const command = client.commands.get(interaction.commandName);
@@ -211,6 +223,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.guildId === config.guildId) {
       resolveMusicPanelChannel(interaction.guildId, interaction.channelId);
+      // Slash commands are also user activity. Treat the command as the last
+      // activity and move the panel 5 seconds after the interaction.
+      music.schedulePanelMoveToBottom(interaction.guildId, 5000);
     }
 
     // Visible activity log: show who used each music slash command without
