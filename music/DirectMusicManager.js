@@ -72,6 +72,7 @@ class DirectMusicManager {
     this.connectionOperations = new Map();
     this.reconnectPromises = new Map();
     this.panelMoveTimers = new Map();
+    this.panelWatchdogTimer = null;
 
     this.musicVoiceChannelId =
       process.env.MUSIC_VOICE_CHANNEL_ID ||
@@ -582,6 +583,7 @@ class DirectMusicManager {
     // the UDP socket while Discord is still performing IP discovery.
     this.client.on("ready", () => {
       this.startRecoveryLoop();
+      this.startPanelWatchdog();
     });
   }
 
@@ -598,6 +600,10 @@ class DirectMusicManager {
         console.log(`🎵 PLAYING: ${this.getTrackTitle(track)}${track.isAutoplay ? ` [${track.autoplayGroup || "Autoplay"}]` : ""}`);
         this.updatePresence(track);
         this.updateVoiceStatus(guildId, `🎵 ${this.getTrackTitle(track)}`).catch(() => {});
+        // The 30-second panel timer starts when Discord is genuinely
+        // receiving the new resource, not when FFmpeg merely starts.
+        this.ensurePanel(guildId).catch(() => {});
+        this.schedulePanelMoveToBottom(guildId);
         this.refreshPanel(guildId).catch(() => {});
       }
     });
@@ -956,10 +962,8 @@ class DirectMusicManager {
     }
 
     await this.refreshPanel(guildId).catch(() => {});
-    // Keep the panel stable while people are chatting. Once 30 seconds have
-    // passed since the new song actually started, recreate it at the bottom
-    // so the latest controls/current song remain easy to reach.
-    this.schedulePanelMoveToBottom(guildId);
+    // The delayed panel timer is armed from the real AudioPlayer Playing
+    // event, so it measures 30 seconds of actual playback.
     console.log("▶️ DISCORD VC PLAYBACK STARTED:", track.title, "[" + (track.source || "direct") + "]");
     return true;
   }
@@ -1300,24 +1304,46 @@ class DirectMusicManager {
   buildPanelPayload(guildId) {
     const state = this.getState(guildId);
     const current = state.current;
-    const duration = current?.length || 0;
-    const position = this.getPosition(guildId);
-    const fallbackMusicImage = "https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=1600&q=85";
+    const duration = Number(current?.length || 0);
+    const position = Math.min(this.getPosition(guildId), duration || Number.MAX_SAFE_INTEGER);
+    const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
+    const blocks = 18;
+    const filled = Math.round(progress * blocks);
+    const progressBar = "▰".repeat(filled) + "▱".repeat(Math.max(0, blocks - filled));
+
+    const status = current
+      ? (state.paused ? "⏸️ PAUSED" : "🟢 PLAYING")
+      : "🟡 READY";
+    const mode = state.autoplay ? "♾️ Related radio" : "⏹️ Manual";
+
     const embed = new EmbedBuilder()
-      .setColor(0x8b5cf6)
-      .setAuthor({ name: "DEATH × GMAO • Music Control" })
-      .setTitle("💀 DEATH Music 24/7")
-      .setDescription(current ? `🎵 **${this.getTrackTitle(current)}**\n👤 **${this.getTrackAuthor(current)}**` : "🎵 **Nothing is playing**\nAutoplay is ready to continue music.")
-      .addFields(
-        { name: "⏱ Duration", value: this.formatDuration(duration), inline: true },
-        { name: "▶ Position", value: this.formatDuration(position), inline: true },
-        { name: "🔊 Volume", value: `${state.volume}%`, inline: true },
-        { name: "🔁 Loop", value: state.loop.toUpperCase(), inline: true },
-        { name: "♾ Autoplay", value: state.autoplay ? "ON" : "OFF", inline: true },
-        { name: "📜 Queue", value: String(state.queue.length), inline: true }
+      .setColor(0x7c3aed)
+      .setAuthor({ name: "🎧  GMAO MUSIC • 24/7", iconURL: this.client.user?.displayAvatarURL?.() })
+      .setTitle(current ? "🎵 Now Playing" : "🎵 Music Control")
+      .setDescription(
+        current
+          ? [
+              `**[${this.getTrackTitle(current)}](${current.url || "https://youtube.com"})**`,
+              `by **${this.getTrackAuthor(current)}**`,
+              "",
+              `**${status}**  •  ${mode}`,
+              `\`${progressBar}\``,
+              `\`${this.formatDuration(position)} / ${this.formatDuration(duration)}\``
+            ].join("\n")
+          : [
+              "**Nothing is playing right now.**",
+              "",
+              `**${status}**  •  ${mode}`,
+              "Autoplay is ready to continue with related music."
+            ].join("\n")
       )
-      .setImage(current?.thumbnail || fallbackMusicImage)
-      .setFooter({ text: "DEATH × GMAO • 24/7 Direct Voice Music" })
+      .addFields(
+        { name: "🔊 Volume", value: `**${state.volume}%**`, inline: true },
+        { name: "🔁 Loop", value: `**${state.loop.toUpperCase()}**`, inline: true },
+        { name: "📜 Queue", value: `**${state.queue.length}**`, inline: true }
+      )
+      .setThumbnail(current?.thumbnail || "https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=800&q=80")
+      .setFooter({ text: "GMAO Music • One track at a time • Related autoplay" })
       .setTimestamp();
 
     const row1 = new ActionRowBuilder().addComponents(
@@ -1327,16 +1353,19 @@ class DirectMusicManager {
       new ButtonBuilder().setCustomId("death_music_stop").setEmoji("⏹️").setStyle(ButtonStyle.Danger),
       new ButtonBuilder().setCustomId("death_music_queue").setEmoji("📜").setStyle(ButtonStyle.Secondary)
     );
+
     const row2 = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("death_music_vol_down").setEmoji("🔉").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("death_music_shuffle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("death_music_loop").setEmoji("🔁").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("death_music_vol_up").setEmoji("🔊").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId("death_music_autoplay").setEmoji("♾️").setStyle(state.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("death_music_autoplay").setEmoji(state.autoplay ? "♾️" : "⛔").setStyle(state.autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
     );
+
     const row3 = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("death_music_refresh").setEmoji("🔄").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("death_music_refresh").setEmoji("🔄").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
     );
+
     return { embeds: [embed], components: [row1, row2, row3] };
   }
 
@@ -1374,14 +1403,43 @@ class DirectMusicManager {
       try { oldPanel = await channel.messages.fetch(oldId); } catch {}
     }
 
-    const newPanel = await channel.send(this.buildPanelPayload(guildId));
-    state.panelMessageId = newPanel.id;
-    state.panelChannelId = channel.id;
+    try {
+      const newPanel = await channel.send(this.buildPanelPayload(guildId));
+      state.panelMessageId = newPanel.id;
+      state.panelChannelId = channel.id;
 
-    if (oldPanel && oldPanel.id !== newPanel.id) {
-      await oldPanel.delete().catch(() => {});
+      if (oldPanel && oldPanel.id !== newPanel.id) {
+        await oldPanel.delete().catch(error =>
+          console.warn("⚠️ Old music panel cleanup failed:", error?.message || error)
+        );
+      }
+
+      console.log("📌 Music panel recreated at channel bottom.");
+      return newPanel;
+    } catch (error) {
+      console.warn("⚠️ Music panel recreation failed:", error?.message || error);
+      // Never leave the bot without a known panel after a failed move.
+      if (!oldPanel) {
+        return this.ensurePanel(guildId);
+      }
+      return oldPanel;
     }
-    return newPanel;
+  }
+
+  startPanelWatchdog() {
+    if (this.panelWatchdogTimer) return;
+    this.panelWatchdogTimer = setInterval(() => {
+      const guildId = this.musicGuildId;
+      if (!guildId) return;
+      const state = this.getState(guildId);
+      if (!state.permanent || state.intentionalLeave) return;
+
+      this.ensurePanel(guildId).catch(error =>
+        console.warn("⚠️ Music panel watchdog failed:", error?.message || error)
+      );
+    }, 15000);
+
+    console.log("🛡️ Music panel watchdog active.");
   }
 
   async refreshPanel(guildId) {
@@ -1461,6 +1519,8 @@ class DirectMusicManager {
 
   async shutdown() {
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    if (this.panelWatchdogTimer) clearInterval(this.panelWatchdogTimer);
+    this.panelWatchdogTimer = null;
     for (const timer of this.panelMoveTimers.values()) clearTimeout(timer);
     this.panelMoveTimers.clear();
     for (const guildId of this.connections.keys()) {
