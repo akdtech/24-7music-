@@ -15,6 +15,8 @@ const path = require("path");
 
 const config = require("./config/config");
 const MusicManager = require("./music/DirectMusicManager");
+require("./music/directPanelPatch");
+require("./music/directOneByOneAutoplayPatch");
 const SpotifyController = require("./spotify/SpotifyController");
 
 console.log("🧹 DEATH Music boot: Discord Voice 24/7 mode.");
