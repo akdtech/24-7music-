@@ -212,8 +212,8 @@ client.on(Events.MessageCreate, message => {
   if (!channelId || message.channelId !== channelId) return;
 
   // User activity resets the quiet-period timer. The panel will move only
-  // after 5 seconds with no new human message.
-  music.schedulePanelMoveToBottom(message.guildId, 5000);
+  // after 20 seconds with no new human message.
+  music.schedulePanelMoveToBottom(message.guildId, 20000);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -224,8 +224,8 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.guildId === config.guildId) {
       resolveMusicPanelChannel(interaction.guildId, interaction.channelId);
       // Slash commands are also user activity. Treat the command as the last
-      // activity and move the panel 5 seconds after the interaction.
-      music.schedulePanelMoveToBottom(interaction.guildId, 5000);
+      // activity and move the panel 20 seconds after the interaction.
+      music.schedulePanelMoveToBottom(interaction.guildId, 20000);
     }
 
     // Visible activity log: show who used each music slash command without
