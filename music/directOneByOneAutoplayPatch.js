@@ -292,6 +292,19 @@ async function findNext(manager, state) {
 
   const related = sameArtistCandidates.length ? sameArtistCandidates : sameGenreCandidates;
 
+  // After a process restart/reconnect there may be no previous track context.
+  // Allow one clean seed song to bootstrap the radio; once it starts, all
+  // subsequent autoplay remains strict same-artist/same-genre.
+  if (!related.length && !hasContext) {
+    const startup = candidates
+      .filter(x => x.relation === "Unrelated")
+      .sort((a, b) => b.score - a.score);
+    if (startup.length) {
+      console.log("🎯 Autoplay startup seed selected: " + titleOf(startup[0].track));
+      return startup[0].track;
+    }
+  }
+
   if (!related.length) {
     console.warn("⚠️ No valid same-artist/same-genre track found; refusing unrelated autoplay.");
     return null;
